@@ -201,20 +201,18 @@ def test_unassigned_technician_cannot_reveal_a_credential(db_session, workspace)
 
 
 def test_reveal_rejects_device_outside_the_ticket_customer(db_session, workspace):
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ticket_queries.CredentialUnavailableError):
         ticket_queries.reveal_device_credential(
             db_session, workspace["ticket"].id, workspace["other_device"].id, technician_a_actor(workspace)
         )
-    assert error.value.status_code == 404
     assert audit_count(db_session, "credential_revealed") == 0
 
 
 def test_reveal_rejects_device_without_a_credential(db_session, workspace):
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ticket_queries.CredentialUnavailableError):
         ticket_queries.reveal_device_credential(
             db_session, workspace["ticket"].id, workspace["olt"].id, technician_a_actor(workspace)
         )
-    assert error.value.status_code == 404
     assert audit_count(db_session, "credential_revealed") == 0
 
 

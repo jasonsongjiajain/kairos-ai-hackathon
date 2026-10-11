@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Button } from '../../components/ui/button'
 import { useAuth } from '../auth/AuthProvider'
 import {
   EventsApiError,
@@ -73,9 +74,9 @@ export function EventIntakeQueue() {
           <p className="form-error" role="alert">
             {loadError}
           </p>
-          <button className="process-button" type="button" onClick={() => void load()}>
+          <Button className="process-button" type="button" onClick={() => void load()}>
             Retry loading events
-          </button>
+          </Button>
         </div>
       </section>
     )
@@ -112,7 +113,7 @@ export function EventIntakeQueue() {
           const isSelected = event.id === selected.id
           return (
             <li key={event.id}>
-              <button
+              <Button
                 type="button"
                 className={isSelected ? 'event-select is-selected' : 'event-select'}
                 aria-pressed={isSelected}
@@ -121,7 +122,7 @@ export function EventIntakeQueue() {
                 <span className="event-type">{describeEventType(event.event_type)}</span>
                 <span className="event-ref tabular">{event.source_event_id}</span>
                 <span className="event-device">{event.device_name}</span>
-              </button>
+              </Button>
             </li>
           )
         })}

@@ -57,6 +57,7 @@ class ToolProposalRecord:
     parameters: dict
     status: str
     summary: str
+    correlation_id: str
     created_at: datetime
 
 
@@ -91,6 +92,8 @@ def propose_tool(
     actor: AuthenticatedUser,
     tool_name: str,
     parameters: dict,
+    *,
+    evidence_chunk_ids: list[str] | None = None,
 ) -> ToolProposalRecord:
     spec = tool_registry.get_tool_spec(tool_name)
     if spec is None:
@@ -101,6 +104,39 @@ def propose_tool(
     ticket = _authorize_ticket(session, ticket_id, actor)
     params = _validate_params(spec, parameters)
     device = _authorize_device(session, ticket, spec, params.device_id)
+
+    if spec.requires_confirmation is False:
+        result = _run(spec.name, device, params)
+        row = ToolExecution(
+            ticket_id=ticket.id,
+            actor_id=actor.id,
+            tool_name=spec.name,
+            parameters=params.model_dump(),
+            outcome=SUCCEEDED if result.succeeded else FAILED,
+            message=result.message,
+            correlation_id=str(uuid.uuid4()),
+        )
+        session.add(row)
+        session.flush()
+        _audit(
+            session,
+            actor_id=actor.id,
+            ticket_id=ticket.id,
+            event_type="tool_executed",
+            details={
+                "tool_name": spec.name,
+                "device_ref": device.device_ref,
+                "parameters": params.model_dump(),
+                "outcome": row.outcome,
+                "message": result.message,
+                "correlation_id": row.correlation_id,
+            },
+        )
+        session.commit()
+        record = _proposal_record(row, device, spec)
+        return ToolProposalRecord(
+            **{**record.__dict__, "status": row.outcome, "summary": result.message}
+        )
 
     row = ToolExecution(
         ticket_id=ticket.id,
@@ -122,6 +158,7 @@ def propose_tool(
             "device_ref": device.device_ref,
             "parameters": params.model_dump(),
             "proposal_id": row.id,
+            "evidence_chunk_ids": evidence_chunk_ids or [],
         },
     )
     session.commit()
@@ -149,11 +186,14 @@ def confirm_tool(
 
     device = _authorize_device(session, ticket, spec, row.parameters.get("device_id", ""))
 
+    if confirmation_id != row.correlation_id:
+        raise ToolForbiddenError("confirmation mismatch")
+
     if row.outcome != PROPOSED:
         return _execution_record(row, device)
 
-    if confirmation_id != row.correlation_id:
-        raise ToolForbiddenError("confirmation mismatch")
+    if not spec.requires_confirmation:
+        raise ToolValidationError("This read-only tool executes when proposed and cannot be confirmed")
 
     params = _validate_params(spec, row.parameters)
     result = _run(spec.name, device, params)
@@ -286,6 +326,7 @@ def _proposal_record(
         parameters=row.parameters,
         status=row.outcome,
         summary=_summary(spec, row.parameters, device),
+        correlation_id=row.correlation_id,
         created_at=row.created_at or datetime.now(UTC),
     )
 

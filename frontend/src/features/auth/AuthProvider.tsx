@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { clearSession, isSessionExpired, readSession, writeSession, type AuthSession } from '../../lib/auth/session'
+import { clearSession, readSession, writeSession, type AuthSession } from '../../lib/auth/session'
 
 type AuthContextValue = {
   session: AuthSession | null

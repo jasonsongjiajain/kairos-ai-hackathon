@@ -214,3 +214,59 @@ def test_process_endpoint_rejects_unknown_event(db_session, workspace):
         app.dependency_overrides.clear()
 
     assert response.status_code == 404
+
+
+def test_process_endpoint_emits_replayable_sse_run_events(db_session, workspace):
+    import uuid
+    import asyncio
+
+    from app.api.events import get_event_run, stream_event_run
+    from app.services.event_stream import event_stream
+
+    run_id = str(uuid.uuid4())
+    event_stream.create_run(run_id)
+    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: operator_actor(workspace)
+    try:
+        response = TestClient(app).post(
+            f"/events/{workspace['event'].id}/process?run_id={run_id}"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    async def read_replay():
+        stream_response = await stream_event_run(
+            run_id, last_event_id=0, user=operator_actor(workspace)
+        )
+        iterator = stream_response.body_iterator
+        messages = [await anext(iterator), await anext(iterator), await anext(iterator)]
+        await iterator.aclose()
+        return "".join(messages)
+
+    replay = asyncio.run(read_replay())
+    state = get_event_run(run_id, user=operator_actor(workspace))
+    event_stream._runs.pop(run_id, None)
+
+    assert response.status_code == 200
+    assert "event: processing" in replay
+    assert "event: ticket_created" in replay
+    assert response.json()["ticket"]["id"] in replay
+    assert state["status"] == "completed"
+
+
+def test_run_endpoints_are_operator_scoped(db_session, workspace):
+    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: operator_actor(workspace)
+    try:
+        client = TestClient(app)
+        created = client.post("/events/runs")
+        assert created.status_code == 201
+        status_response = client.get(f"/events/runs/{created.json()['run_id']}")
+        app.dependency_overrides[get_current_user] = lambda: technician_actor(workspace)
+        denied = client.get(f"/events/runs/{created.json()['run_id']}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "queued"
+    assert denied.status_code == 403

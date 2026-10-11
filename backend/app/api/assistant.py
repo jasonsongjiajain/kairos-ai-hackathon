@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.ports import ChatCompletionProvider, EmbeddingProvider
 from app.auth.dependencies import AuthenticatedUser, get_current_user
+from app.auth.tokens import decode_access_token
 from app.config import get_settings
 from app.db.session import get_session
 from app.domain.assistant_schemas import (
@@ -16,8 +18,65 @@ from app.integrations.model_provider import build_chat_provider
 from app.services import assistant
 from app.services.assistant import AssistantAnswerRecord, AssistantFormatError
 from app.services.ticket_queries import TicketNotFoundError
+from app.domain.models import Role, User
 
 router = APIRouter(prefix="/tickets", tags=["assistant"])
+
+
+@router.websocket("/{ticket_id}/assistant/stream")
+async def stream_assistant_message(
+    websocket: WebSocket,
+    ticket_id: str,
+    session: Session = Depends(get_session),
+) -> None:
+    """Send ticket-scoped assistant progress and a validated final answer as JSON frames."""
+    await websocket.accept()
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401, reason="Authentication required")
+        return
+    try:
+        claims = decode_access_token(token)
+    except ValueError:
+        await websocket.close(code=4401, reason="Authentication required")
+        return
+    user_row = session.scalar(
+        select(User).where(User.id == claims["sub"], User.is_active.is_(True))
+    )
+    role = session.get(Role, user_row.role_id) if user_row else None
+    if user_row is None or role is None or role.name != claims["role"]:
+        await websocket.close(code=4401, reason="Authentication required")
+        return
+    actor = AuthenticatedUser(id=user_row.id, email=user_row.email, role=role.name)
+    await websocket.send_json({"type": "ready"})
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            question = payload.get("question") if isinstance(payload, dict) else None
+            if not isinstance(question, str) or not question.strip() or len(question) > 1000:
+                await websocket.send_json({"type": "error", "message": "Question must be 1 to 1000 characters."})
+                continue
+            await websocket.send_json({"type": "retrieval_started"})
+            try:
+                record = assistant.answer_ticket_question(
+                    session,
+                    ticket_id,
+                    actor,
+                    question,
+                    embedder=build_embedding_provider(get_settings()),
+                    provider=build_chat_provider(get_settings()),
+                )
+            except TicketNotFoundError:
+                await websocket.send_json({"type": "error", "message": "Ticket not found or unavailable."})
+                await websocket.close(code=4404)
+                return
+            except AssistantFormatError:
+                await websocket.send_json({"type": "error", "message": "The assistant returned an unreadable answer. Retry the question."})
+                continue
+            await websocket.send_json({"type": "answer", "data": _to_read(record).model_dump()})
+            await websocket.send_json({"type": "complete", "session_id": record.session_id})
+    except WebSocketDisconnect:
+        return
 
 
 def get_embedding_provider() -> EmbeddingProvider:

@@ -239,9 +239,8 @@ def test_customer_scope_limits_technician_to_assigned_customers(db_session, work
     allowed = ticket_queries.get_customer_detail(db_session, workspace["customer_one"].id, technician_a_actor(workspace))
     assert allowed.customer.id == workspace["customer_one"].id
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ticket_queries.CustomerNotFoundError):
         ticket_queries.get_customer_detail(db_session, workspace["customer_two"].id, technician_a_actor(workspace))
-    assert error.value.status_code == 404
 
     operator_view = ticket_queries.get_customer_detail(db_session, workspace["customer_two"].id, operator_actor(workspace))
     assert operator_view.customer.id == workspace["customer_two"].id

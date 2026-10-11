@@ -2,6 +2,9 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
+import { Button } from '../../components/ui/button'
+import { Input } from '../../components/ui/input'
+import { Label } from '../../components/ui/label'
 import { useAuth } from './AuthProvider'
 
 const credentialsSchema = z.object({
@@ -30,8 +33,8 @@ export function SignInForm() {
   return (
     <form className="sign-in-form" onSubmit={handleSubmit(submit)} noValidate>
       <div className="form-field">
-        <label htmlFor="email">Work email</label>
-        <input
+        <Label htmlFor="email">Work email</Label>
+        <Input
           id="email"
           type="email"
           autoComplete="username"
@@ -44,8 +47,8 @@ export function SignInForm() {
         {errors.email && <p className="field-error" id="email-error">{errors.email.message}</p>}
       </div>
       <div className="form-field">
-        <label htmlFor="password">Password</label>
-        <input
+        <Label htmlFor="password">Password</Label>
+        <Input
           id="password"
           type="password"
           autoComplete="current-password"
@@ -56,9 +59,9 @@ export function SignInForm() {
         {errors.password && <p className="field-error" id="password-error">{errors.password.message}</p>}
       </div>
       {requestError && <p className="form-error" role="alert">{requestError}</p>}
-      <button className="sign-in-button" type="submit" disabled={isSubmitting}>
+      <Button className="sign-in-button" type="submit" disabled={isSubmitting}>
         {isSubmitting ? 'Checking credentials…' : 'Sign in'}
-      </button>
+      </Button>
     </form>
   )
 }

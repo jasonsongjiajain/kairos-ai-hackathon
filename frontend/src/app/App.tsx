@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { Button } from '../components/ui/button'
 import { AuthProvider, useAuth } from '../features/auth/AuthProvider'
 import { ProtectedRoute, SignInRoute } from '../features/auth/ProtectedRoute'
 import { EventIntakeQueue } from '../features/intake/EventIntakeQueue'
@@ -14,7 +15,7 @@ function Workspace() {
         <p className="app-context">FIELD OPERATIONS</p>
         <h1>Field Force Incident Assistant</h1>
         <p className="section-label">TECHNICIAN</p>
-        <button className="text-button" type="button" onClick={signOut}>Sign out</button>
+        <Button className="text-button" variant="quiet" type="button" onClick={signOut}>Sign out</Button>
       </header>
       <AssignedWorkList />
     </main>
@@ -29,7 +30,7 @@ function OperationsWorkspace() {
         <p className="app-context">FIELD OPERATIONS</p>
         <h1>Field Force Incident Assistant</h1>
         <p className="section-label">{session?.role === 'supervisor' ? 'SUPERVISOR' : 'OPERATOR'}</p>
-        <button className="text-button" type="button" onClick={signOut}>Sign out</button>
+        <Button className="text-button" variant="quiet" type="button" onClick={signOut}>Sign out</Button>
       </header>
       <EventIntakeQueue />
     </main>

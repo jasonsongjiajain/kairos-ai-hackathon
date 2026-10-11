@@ -20,6 +20,38 @@ No live TMF/NTT/OSS or real device integration is included.
    config change). State-changing actions run only after explicit approval, and every run is
    recorded in an audit timeline.
 
+The agent can select an allowlisted action from a grounded request with
+`POST /tickets/{ticket_id}/tools/agent-propose` using `{ "question": "...", "device_id": "..." }`.
+The backend checks the assigned ticket, retrieved procedure, device/customer scope, tool allowlist,
+and typed arguments. A selected read-only check runs immediately; state-changing actions are returned
+as proposals and require the separate `/confirm` call. Evidence chunk IDs are recorded in the audit event.
+
+Event intake supports an optional authenticated SSE run stream. Create an event run, connect to its
+event stream, then process the event with the returned `run_id`:
+
+```text
+POST /events/runs
+GET  /events/runs/{run_id}/events
+POST /events/{event_id}/process?run_id={run_id}
+GET  /events/runs/{run_id}
+```
+
+The stream emits `processing`, then `ticket_created` or `failed`. Reconnect with the
+`Last-Event-ID` header to replay events after the last received event. Run state is held in API
+process memory for this single-process MVP; a restart clears run history.
+
+Ticket troubleshooting also exposes an authenticated WebSocket endpoint:
+
+```text
+WS /tickets/{ticket_id}/assistant/stream?token={access_token}
+```
+
+Send `{"question":"..."}` after the `ready` frame. The server sends `retrieval_started`, then an
+`answer` frame containing the same validated citations and recommendations as the HTTP endpoint,
+followed by `complete`. The HTTP `POST /tickets/{ticket_id}/assistant/messages` remains available
+for clients that do not support WebSockets. The current chat provider returns complete structured
+answers, so this stream reports retrieval progress and the final answer rather than token deltas.
+
 ## Architecture
 
 - **Frontend:** React + TypeScript + Vite, Tailwind, Radix primitives, TanStack Query-ready API layer.

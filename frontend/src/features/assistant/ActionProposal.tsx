@@ -1,4 +1,5 @@
 import type { ToolProposal } from '../../lib/api/tools'
+import { Button } from '../../components/ui/button'
 
 type ActionProposalProps = {
   proposal: ToolProposal
@@ -53,9 +54,9 @@ export function ActionProposal({ proposal, onReview, busy = false }: ActionPropo
       ) : (
         <p className="muted-note">This is a read-only check and makes no changes.</p>
       )}
-      <button className="process-button" type="button" onClick={onReview} disabled={busy}>
+      <Button className="process-button" type="button" onClick={onReview} disabled={busy}>
         {proposal.requires_confirmation ? 'Review and approve' : 'Run check'}
-      </button>
+      </Button>
     </article>
   )
 }

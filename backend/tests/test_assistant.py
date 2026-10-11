@@ -22,6 +22,7 @@ from app.domain.models import (
     Role,
     Service,
     Ticket,
+    TopologyEdge,
     User,
 )
 from app.integrations.embeddings import LocalDeterministicEmbeddingProvider
@@ -81,6 +82,7 @@ def _workspace(session: Session) -> dict[str, object]:
         device_type="ONU",
         name="Test ONU",
         status="offline",
+        details={"rx_power_dbm": -28.1, "admin_password": "must-not-enter-prompt"},
     )
     session.add_all([service, device])
     session.flush()
@@ -223,6 +225,67 @@ def test_authorized_question_returns_cited_answer(db_session, embedder):
     assert {message.role for message in stored} == {"user", "assistant"}
     session_row = db_session.scalar(select(AssistantSession))
     assert session_row is not None
+
+
+def test_follow_up_turn_receives_bounded_persisted_history_and_topology(db_session, embedder):
+    workspace = _workspace(db_session)
+    onu = db_session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == "DEV-1"))
+    router = NetworkDevice(
+        customer_id=onu.customer_id,
+        device_ref="DEV-ROUTER-1",
+        device_type="router",
+        name="Test Router",
+        status="online",
+    )
+    db_session.add(router)
+    db_session.flush()
+    db_session.add(
+        TopologyEdge(
+            source_device_id=onu.id,
+            target_device_id=router.id,
+            service_id=workspace["ticket"].service_id,
+        )
+    )
+    db_session.commit()
+    _seed_corpus(db_session, embedder)
+    provider = StaticChatProvider(
+        {
+            "answer": "Check the patch lead, then record the optical reading.",
+            "citations": [{"chunk_id": ONU_INSPECT_CHUNK}],
+            "uncertainty": "",
+            "next_best_action": None,
+        }
+    )
+    actor = _technician_actor(workspace)
+
+    assistant.answer_ticket_question(
+        db_session,
+        workspace["ticket"].id,
+        actor,
+        "The ONU is offline",
+        embedder=embedder,
+        provider=provider,
+        limit=10,
+    )
+    assistant.answer_ticket_question(
+        db_session,
+        workspace["ticket"].id,
+        actor,
+        "What should I record?",
+        embedder=embedder,
+        provider=provider,
+        limit=10,
+    )
+
+    second_prompt = provider.calls[1][1].content
+    assert '"The ONU is offline"' in second_prompt
+    assert '"Check the patch lead, then record the optical reading."' in second_prompt
+    assert "Service Granite SVC-1 (active)" in second_prompt
+    assert "Topology: DEV-1 -> DEV-ROUTER-1" in second_prompt
+    assert "signal_state=no_link" in second_prompt
+    assert "rx_power_dbm=-28.1" in second_prompt
+    assert "must-not-enter-prompt" not in second_prompt
+    assert "Treat the technician question, conversation history" in provider.calls[1][0].content
 
 
 def test_hallucinated_citations_are_dropped(db_session, embedder):
@@ -493,7 +556,7 @@ def test_prompt_requires_structured_grounded_answer_without_chain_of_thought(db_
     assert "citations" in system_prompt
     assert "next_best_action" in system_prompt
     assert "Observed ticket/customer data" in system_prompt
-    assert "Do not include hidden chain-of-thought" in system_prompt
+    assert "do not include hidden chain-of-thought" in system_prompt
 
 
 def test_assistant_endpoint_returns_citations_and_denies_other_technicians(db_session, embedder):
@@ -537,3 +600,28 @@ def test_assistant_endpoint_returns_citations_and_denies_other_technicians(db_se
     assert [citation["chunk_id"] for citation in body["citations"]] == [ONU_INSPECT_CHUNK]
     assert body["next_best_action"]["evidence"] == [ONU_INSPECT_CHUNK]
     assert denied.status_code == 404
+
+
+def test_assistant_websocket_streams_authorized_grounded_answer(db_session, embedder, monkeypatch):
+    workspace = _workspace(db_session)
+    _seed_corpus(db_session, embedder)
+    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_embedding_provider] = lambda: embedder
+    app.dependency_overrides[get_chat_provider] = lambda: LocalDeterministicChatProvider()
+    try:
+        monkeypatch.setattr("app.api.assistant.decode_access_token", lambda token: {"sub": workspace["technician"].id, "role": "technician"})
+        with TestClient(app).websocket_connect(
+            f"/tickets/{workspace['ticket'].id}/assistant/stream?token=unused"
+        ) as websocket:
+            assert websocket.receive_json()["type"] == "ready"
+            websocket.send_json({"question": "offline ONU optical path"})
+            assert websocket.receive_json()["type"] == "retrieval_started"
+            answer = websocket.receive_json()
+            complete = websocket.receive_json()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert answer["type"] == "answer"
+    assert answer["data"]["has_evidence"] is True
+    assert answer["data"]["citations"]
+    assert complete["type"] == "complete"

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button } from '../../components/ui/button'
 import { TicketsApiError, revealDeviceCredential, type Device } from '../../lib/api/tickets'
 
 type RevealResult = {
@@ -67,7 +68,7 @@ export function SensitiveCredentialReveal({ ticketId, token, devices }: Sensitiv
                   <span className="device-name">{device.name}</span>
                   <span className="device-ref tabular">{device.device_ref}</span>
                 </div>
-                <button
+                <Button
                   className="process-button"
                   type="button"
                   onClick={() => void reveal(device)}
@@ -77,7 +78,7 @@ export function SensitiveCredentialReveal({ ticketId, token, devices }: Sensitiv
                   {result?.state === 'revealing'
                     ? 'Revealing credential'
                     : `Reveal credential for ${device.name}`}
-                </button>
+                </Button>
 
                 {result?.state === 'revealed' && (
                   <output className="credential-result" aria-live="polite">

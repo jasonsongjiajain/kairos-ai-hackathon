@@ -32,6 +32,55 @@ export type AssistantCitation = z.infer<typeof citationSchema>
 export type NextBestAction = z.infer<typeof nextBestActionSchema>
 export type AssistantAnswer = z.infer<typeof assistantAnswerSchema>
 
+export type AssistantStreamEvent =
+  | { type: 'ready' | 'retrieval_started' }
+  | { type: 'answer'; data: AssistantAnswer }
+  | { type: 'complete'; session_id: string }
+  | { type: 'error'; message: string }
+
+export function openAssistantStream(
+  ticketId: string,
+  token: string,
+  onEvent: (event: AssistantStreamEvent) => void,
+  onClose?: (event: CloseEvent) => void,
+): WebSocket {
+  const socket = new WebSocket(assistantStreamUrl(ticketId, token))
+  socket.addEventListener('message', (message) => {
+    try {
+      const parsed: unknown = JSON.parse(String(message.data))
+      if (!parsed || typeof parsed !== 'object' || !('type' in parsed)) return
+      const event = parsed as Record<string, unknown>
+      if (event.type === 'answer') {
+        const answer = assistantAnswerSchema.safeParse(event.data)
+        if (!answer.success) {
+          onEvent({ type: 'error', message: 'The assistant service returned an unexpected response.' })
+          return
+        }
+        onEvent({ type: 'answer', data: answer.data })
+      } else if (event.type === 'ready' || event.type === 'retrieval_started') {
+        onEvent({ type: event.type })
+      } else if (event.type === 'complete' && typeof event.session_id === 'string') {
+        onEvent({ type: 'complete', session_id: event.session_id })
+      } else if (event.type === 'error' && typeof event.message === 'string') {
+        onEvent({ type: 'error', message: event.message })
+      }
+    } catch {
+      onEvent({ type: 'error', message: 'The assistant service sent an unreadable event.' })
+    }
+  })
+  socket.addEventListener('close', (event) => onClose?.(event))
+  return socket
+}
+
+export function assistantStreamUrl(ticketId: string, token: string): string {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const url = new URL(
+    `${protocol}//${window.location.host}/tickets/${encodeURIComponent(ticketId)}/assistant/stream`,
+  )
+  url.searchParams.set('token', token)
+  return url.toString()
+}
+
 export async function askAssistant(
   ticketId: string,
   question: string,
@@ -73,4 +122,62 @@ export async function askAssistant(
     throw new TicketsApiError('The assistant service returned an unexpected response.')
   }
   return parsed.data
+}
+
+export async function askAssistantWithStream(
+  ticketId: string,
+  question: string,
+  token: string,
+  onProgress?: (message: string) => void,
+): Promise<AssistantAnswer> {
+  if (typeof WebSocket === 'undefined') return askAssistant(ticketId, question, token)
+
+  return new Promise((resolve, reject) => {
+    let socket: WebSocket
+    let requestSent = false
+    let settled = false
+    const finishWithHttpFallback = () => {
+      if (settled) return
+      settled = true
+      void askAssistant(ticketId, question, token).then(resolve, reject)
+    }
+    try {
+      socket = openAssistantStream(
+        ticketId,
+        token,
+        (event) => {
+          if (event.type === 'ready') {
+            requestSent = true
+            socket.send(JSON.stringify({ question }))
+          } else if (event.type === 'retrieval_started') {
+            onProgress?.('Searching ticket evidence and service guidance...')
+          } else if (event.type === 'answer') {
+            settled = true
+            resolve(event.data)
+            socket.close()
+          } else if (event.type === 'error') {
+            settled = true
+            reject(new TicketsApiError(event.message))
+            socket.close()
+          }
+        },
+        () => {
+          if (settled) return
+          if (!requestSent) finishWithHttpFallback()
+          else {
+            settled = true
+            reject(new TicketsApiError('The assistant stream closed before returning an answer.'))
+          }
+        },
+      )
+      socket.addEventListener('error', () => {
+        if (requestSent || settled) return
+        socket.close()
+        finishWithHttpFallback()
+      })
+      socket.addEventListener('open', () => onProgress?.('Connecting to the ticket assistant...'))
+    } catch {
+      finishWithHttpFallback()
+    }
+  })
 }

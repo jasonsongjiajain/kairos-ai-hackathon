@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Button } from '../../components/ui/button'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { fetchTicketAudit, type AuditEvent } from '../../lib/api/audit'
@@ -72,9 +73,9 @@ export function AuditPage() {
           <p className="form-error" role="alert">
             {error}
           </p>
-          <button className="process-button" type="button" onClick={() => void load()}>
+          <Button className="process-button" type="button" onClick={() => void load()}>
             Retry loading audit
-          </button>
+          </Button>
         </div>
       )}
 

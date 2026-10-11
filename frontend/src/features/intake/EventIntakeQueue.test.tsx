@@ -45,6 +45,14 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+function eventStreamResponse() {
+  return new Response(
+    'event: processing\ndata: {"status":"processing"}\n\n' +
+      'id: 2\nevent: ticket_created\ndata: {"status":"completed"}\n\n',
+    { headers: { 'Content-Type': 'text/event-stream' } },
+  )
+}
+
 function renderQueue() {
   return render(
     <AuthProvider>
@@ -127,11 +135,14 @@ describe('EventIntakeQueue', () => {
     const user = userEvent.setup()
     let resolveProcess: (value: Response) => void = () => {}
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).includes('/process')) {
+      const path = String(input)
+      if (path.includes('/process')) {
         return new Promise<Response>((resolve) => {
           resolveProcess = resolve
         })
       }
+      if (path.endsWith('/events/runs')) return Promise.resolve(jsonResponse({ run_id: '00000000-0000-4000-8000-000000000001' }, 201))
+      if (path.includes('/events/runs/') && path.endsWith('/events')) return Promise.resolve(eventStreamResponse())
       return Promise.resolve(jsonResponse(PENDING_EVENTS))
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -141,7 +152,9 @@ describe('EventIntakeQueue', () => {
     await user.click(eventButton)
     await user.click(screen.getByRole('button', { name: 'Process event' }))
 
-    const pendingButton = await screen.findByRole('button', { name: 'Processing event' })
+    const pendingButton = await screen.findByRole('button', {
+      name: /Processing event|Assigning the incident|Ticket created and assigned/,
+    })
     expect(pendingButton).toBeDisabled()
 
     await act(async () => {
@@ -155,16 +168,13 @@ describe('EventIntakeQueue', () => {
 
   it('reports a duplicate result without creating a second ticket', async () => {
     const user = userEvent.setup()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL) =>
-        Promise.resolve(
-          String(input).includes('/process')
-            ? jsonResponse({ ...PROCESS_RESULT, created: false, duplicate: true })
-            : jsonResponse(PENDING_EVENTS),
-        ),
-      ),
-    )
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path.includes('/process')) return Promise.resolve(jsonResponse({ ...PROCESS_RESULT, created: false, duplicate: true }))
+      if (path.endsWith('/events/runs')) return Promise.resolve(jsonResponse({ run_id: '00000000-0000-4000-8000-000000000001' }, 201))
+      if (path.includes('/events/runs/') && path.endsWith('/events')) return Promise.resolve(eventStreamResponse())
+      return Promise.resolve(jsonResponse(PENDING_EVENTS))
+    }))
     renderQueue()
 
     await user.click(await screen.findByRole('button', { name: /ONU OFFLINE/ }))

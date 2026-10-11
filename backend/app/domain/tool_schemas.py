@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ToolCatalogItemRead(BaseModel):
@@ -12,8 +12,15 @@ class ToolCatalogItemRead(BaseModel):
 
 class ToolProposeRequest(BaseModel):
     tool_name: str = Field(min_length=1, max_length=60)
+    model_proposal: dict | None = None
     device_id: str = Field(min_length=1, max_length=64)
     parameters: dict = Field(default_factory=dict)
+
+
+class AgentToolProposeRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=1000)
+    device_id: str = Field(min_length=1, max_length=64)
+
 
 
 class ToolProposalRead(BaseModel):
@@ -27,6 +34,7 @@ class ToolProposalRead(BaseModel):
     parameters: dict
     status: str
     summary: str
+    confirmation_id: str
     created_at: datetime
 
 

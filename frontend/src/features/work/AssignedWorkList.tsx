@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Button } from '../../components/ui/button'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { TicketsApiError, fetchMyTickets, type AssignedTicket } from '../../lib/api/tickets'
@@ -58,9 +59,9 @@ export function AssignedWorkList() {
           <p className="form-error" role="alert">
             {loadError}
           </p>
-          <button className="process-button" type="button" onClick={() => void load()}>
+          <Button className="process-button" type="button" onClick={() => void load()}>
             Retry loading assigned work
-          </button>
+          </Button>
         </div>
       )}
 

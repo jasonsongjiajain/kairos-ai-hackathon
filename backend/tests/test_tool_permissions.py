@@ -1,4 +1,5 @@
 import pytest
+from fastapi import HTTPException
 
 from app.auth.dependencies import AuthenticatedUser
 from app.services import tool_execution
@@ -31,11 +32,12 @@ def test_operator_cannot_propose_a_stateful_tool(db_session, tool_workspace):
 
 
 def test_unassigned_technician_cannot_propose(db_session, tool_workspace):
-    with pytest.raises(ToolNotFoundError):
+    with pytest.raises(HTTPException) as error:
         tool_execution.propose_tool(
             db_session, tool_workspace["ticket"].id, actor(tool_workspace, "technician_b", "technician"),
             "reboot_router", {"device_id": tool_workspace["router"].id},
         )
+    assert error.value.status_code == 404
 
 
 def test_device_outside_the_ticket_customer_is_rejected(db_session, tool_workspace):

@@ -19,6 +19,7 @@ const proposalSchema = z.object({
   parameters: z.record(z.unknown()),
   status: z.string().min(1),
   summary: z.string(),
+  confirmation_id: z.string().min(1),
   created_at: z.string(),
 })
 
@@ -90,6 +91,37 @@ export async function proposeTool(
       throw new TicketsApiError('This action target is not available for your assigned work.', response.status)
     }
     throw new TicketsApiError('The action could not be prepared. Retry in a moment.', response.status)
+  }
+  const parsed = proposalSchema.safeParse(await response.json().catch(() => null))
+  if (!parsed.success) {
+    throw new TicketsApiError('The action service returned an unexpected response.')
+  }
+  return parsed.data
+}
+
+export async function proposeAgentTool(
+  ticketId: string,
+  input: { question: string; deviceId: string },
+  token: string,
+): Promise<ToolProposal> {
+  const response = await post(`/tickets/${encodeURIComponent(ticketId)}/tools/agent-propose`, token, {
+    question: input.question,
+    device_id: input.deviceId,
+  })
+  if (!response.ok) {
+    if (response.status === 403 || response.status === 404) {
+      throw new TicketsApiError('This action is not available for your assigned ticket.', response.status)
+    }
+    if (response.status === 422) {
+      const body = await response.json().catch(() => null)
+      throw new TicketsApiError(
+        body && typeof body.detail === 'string'
+          ? body.detail
+          : 'The agent could not ground a safe action in the retrieved procedure.',
+        response.status,
+      )
+    }
+    throw new TicketsApiError('The agent could not prepare an action. Retry in a moment.', response.status)
   }
   const parsed = proposalSchema.safeParse(await response.json().catch(() => null))
   if (!parsed.success) {

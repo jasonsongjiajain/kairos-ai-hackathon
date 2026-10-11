@@ -1,4 +1,5 @@
 import type { ToolExecution } from '../../lib/api/tools'
+import { Button } from '../../components/ui/button'
 
 type ToolExecutionResultProps = {
   execution: ToolExecution
@@ -28,9 +29,9 @@ export function ToolExecutionResult({ execution, onRunAnother }: ToolExecutionRe
           <dd>{new Date(execution.executed_at).toLocaleString()}</dd>
         </div>
       </dl>
-      <button className="text-button" type="button" onClick={onRunAnother}>
+      <Button className="text-button" variant="quiet" type="button" onClick={onRunAnother}>
         Prepare another action
-      </button>
+      </Button>
     </div>
   )
 }

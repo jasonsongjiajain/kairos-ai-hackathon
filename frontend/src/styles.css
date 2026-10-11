@@ -883,6 +883,31 @@ h1 {
   gap: 10px;
 }
 
+.agent-suggested-action {
+  display: block;
+  margin-top: 14px;
+  border-top: 1px solid #c8c8bc;
+}
+
+.agent-suggested-action h4 {
+  margin: 0;
+  color: #2b4023;
+}
+
+.agent-suggested-action .ui-card-header {
+  padding-bottom: 8px;
+}
+
+.agent-suggested-action .ui-card-content {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-suggested-action .field {
+  display: grid;
+  gap: 6px;
+}
+
 .assistant-uncertainty {
   padding: 8px 10px;
   border-left: 4px solid #7a4a00;
@@ -1039,8 +1064,9 @@ h1 {
 .citation-summary:focus-visible,
 .assistant-composer textarea:focus-visible,
 .assistant-submit:focus-visible,
+.agent-suggested-action button:focus-visible,
 .proposal-card button:focus-visible,
-.action-form select:focus-visible,
+.action-form .ui-select-trigger:focus-visible,
 .action-form input:focus-visible,
 .dialog button:focus-visible,
 .audit-entry:focus-visible {
@@ -1124,6 +1150,137 @@ h1 {
   padding: 20px;
   background: rgba(24, 28, 22, 0.6);
   z-index: 10;
+}
+
+.ui-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(24, 28, 22, 0.6);
+  z-index: 50;
+}
+
+.ui-dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 51;
+  transform: translate(-50%, -50%);
+}
+
+.ui-dialog-title {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.ui-dialog-description {
+  display: block;
+  line-height: 1.5;
+}
+
+.ui-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.ui-button {
+  min-height: 44px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ui-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.ui-input,
+.ui-textarea {
+  width: 100%;
+  font: inherit;
+}
+
+.ui-select-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #8a8f84;
+  border-radius: 4px;
+  background: #fff;
+  color: #20251f;
+  font: inherit;
+  text-align: left;
+}
+
+.ui-select-trigger:focus-visible,
+.ui-select-item:focus-visible {
+  outline: 3px solid #344c2b;
+  outline-offset: 2px;
+}
+
+.ui-select-content {
+  z-index: 60;
+  min-width: var(--radix-select-trigger-width);
+  max-height: var(--radix-select-content-available-height);
+  overflow: auto;
+  border: 1px solid #8a8f84;
+  border-radius: 4px;
+  background: #fbfaf6;
+  box-shadow: 0 4px 12px rgba(20, 24, 18, 0.16);
+}
+
+.ui-select-item {
+  position: relative;
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  padding: 8px 34px 8px 10px;
+  outline: none;
+  cursor: pointer;
+}
+
+.ui-select-item[data-highlighted] {
+  background: #e9ece4;
+  color: #20251f;
+}
+
+.ui-select-indicator {
+  position: absolute;
+  right: 10px;
+  display: inline-flex;
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid #8a8f84;
+  border-radius: 4px;
+  color: #344c2b;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.ui-card {
+  border: 1px solid #c8c8bc;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.ui-card-header,
+.ui-card-content {
+  padding: 12px 14px;
+}
+
+.ui-card-header + .ui-card-content {
+  padding-top: 0;
 }
 
 .dialog {

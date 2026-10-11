@@ -1,4 +1,7 @@
 import { useState, type FormEvent } from 'react'
+import { Button } from '../../components/ui/button'
+import { Label } from '../../components/ui/label'
+import { Textarea } from '../../components/ui/textarea'
 
 type AssistantComposerProps = {
   onSubmit: (question: string) => void
@@ -19,8 +22,8 @@ export function AssistantComposer({ onSubmit, disabled }: AssistantComposerProps
   return (
     <form className="assistant-composer" onSubmit={handleSubmit}>
       <div className="form-field">
-        <label htmlFor="assistant-question">Ask about this ticket</label>
-        <textarea
+        <Label htmlFor="assistant-question">Ask about this ticket</Label>
+        <Textarea
           id="assistant-question"
           name="question"
           rows={3}
@@ -31,13 +34,13 @@ export function AssistantComposer({ onSubmit, disabled }: AssistantComposerProps
           placeholder="Describe what you see and what you need to fix."
         />
       </div>
-      <button
+      <Button
         className="process-button assistant-submit"
         type="submit"
         disabled={disabled || question.trim().length === 0}
       >
         {disabled ? 'Searching service guidance' : 'Ask the assistant'}
-      </button>
+      </Button>
     </form>
   )
 }

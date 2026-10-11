@@ -1,8 +1,10 @@
+import pytest
 from sqlalchemy import func, select
 
 from app.auth.dependencies import AuthenticatedUser
 from app.domain.models import AuditEvent
 from app.services import tool_execution
+from app.services.tool_execution import ToolForbiddenError
 
 
 def actor(workspace, key: str, role: str) -> AuthenticatedUser:
@@ -60,12 +62,44 @@ def test_read_only_tool_reports_status_without_confirmation_change(db_session, t
         db_session, tool_workspace["ticket"].id, technician,
         "get_device_status", {"device_id": tool_workspace["onu"].id},
     )
-    result = tool_execution.confirm_tool(
+
+    assert proposal.status == "succeeded"
+    assert "offline" in proposal.summary
+    assert audit_count(db_session, "tool_executed") == 1
+
+
+def test_confirmation_replay_does_not_duplicate_execution_or_audit(db_session, tool_workspace):
+    technician = actor(tool_workspace, "technician_a", "technician")
+    proposal = tool_execution.propose_tool(
+        db_session, tool_workspace["ticket"].id, technician,
+        "reboot_router", {"device_id": tool_workspace["router"].id},
+    )
+    first = tool_execution.confirm_tool(
+        db_session, tool_workspace["ticket"].id, proposal.id, technician, proposal.correlation_id
+    )
+    second = tool_execution.confirm_tool(
         db_session, tool_workspace["ticket"].id, proposal.id, technician, proposal.correlation_id
     )
 
-    assert result.status == "succeeded"
-    assert "offline" in result.message
+    assert first.status == second.status == "succeeded"
+    assert audit_count(db_session, "tool_executed") == 1
+    with pytest.raises(ToolForbiddenError):
+        tool_execution.confirm_tool(
+            db_session, tool_workspace["ticket"].id, proposal.id, technician, "incorrect-replay"
+        )
+
+
+def test_confirmation_id_must_match_proposal(db_session, tool_workspace):
+    technician = actor(tool_workspace, "technician_a", "technician")
+    proposal = tool_execution.propose_tool(
+        db_session, tool_workspace["ticket"].id, technician,
+        "reboot_router", {"device_id": tool_workspace["router"].id},
+    )
+
+    with pytest.raises(ToolForbiddenError):
+        tool_execution.confirm_tool(
+            db_session, tool_workspace["ticket"].id, proposal.id, technician, "wrong-confirmation"
+        )
 
 
 def test_update_config_applies_bounded_settings(db_session, tool_workspace):

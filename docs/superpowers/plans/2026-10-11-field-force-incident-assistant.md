@@ -14,6 +14,22 @@
 
 Build the vertical slice in dependency order. Keep one event type, deterministic assignment, seeded synthetic records, a small curated knowledge set, and simulated network tools. Live TMF/NTT/device integration is out of scope. Do not commit real credentials or use real customer data.
 
+## Backend phase status (2026-10-11)
+
+Backend MVP implementation and verification are complete for the planned vertical slice:
+
+- PostgreSQL/pgvector migrations, demo seed, and idempotent knowledge indexing.
+- Argon2id login, signed JWTs, role checks, assignment and customer scope.
+- Idempotent event-to-ticket assignment and a run API with status, authenticated SSE, bounded replay, and `Last-Event-ID` reconnection.
+- Ticket/customer/topology queries, redacted ticket serialization, and audited no-store credential reveal.
+- Retrieval-grounded assistant answers with citations validated against retrieved chunks and bounded secret-free ticket context.
+- Agent-selected allowlisted tool proposals grounded in retrieved procedures. Stateful simulated actions require explicit confirmation; read-only status checks execute at proposal time.
+- Audit history and an integrated API demo-flow test.
+
+Verification completed: 99 backend tests pass. PostgreSQL migrations, seed twice, and knowledge indexing twice were also verified against a fresh isolated Compose database. The existing local Compose database contains a previously changed demo router state, so the canonical seed correctly refused to overwrite it; the existing volume was left intact.
+
+The process-local run stream is intentionally single-API-process MVP infrastructure. A multi-worker deployment needs shared run/event storage before scaling out.
+
 ## File map
 
 The repository currently has no application scaffold. Create these files as the plan progresses; keep modules narrow and add files only for the agreed feature boundaries.

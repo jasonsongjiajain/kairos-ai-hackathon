@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Button } from '../../components/ui/button'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { TicketsApiError, fetchTicket, type TicketDetail } from '../../lib/api/tickets'
@@ -95,9 +96,9 @@ export function TicketPage() {
           <p className="form-error" role="alert">
             {pageError}
           </p>
-          <button className="process-button" type="button" onClick={() => void load()}>
+          <Button className="process-button" type="button" onClick={() => void load()}>
             Retry loading ticket
-          </button>
+          </Button>
         </div>
       )}
 
@@ -142,9 +143,9 @@ export function TicketPage() {
                 <p className="form-error" role="alert">
                   {topologyError}
                 </p>
-                <button className="process-button" type="button" onClick={() => void load()}>
+                <Button className="process-button" type="button" onClick={() => void load()}>
                   Retry service path
-                </button>
+                </Button>
               </div>
             )}
             {topologyState === 'ready' && topology && (
@@ -160,7 +161,7 @@ export function TicketPage() {
 
           <AgentActionsPanel ticketId={detail.ticket.id} token={token} devices={detail.devices} />
 
-          <TroubleshootingAssistant ticketId={detail.ticket.id} token={token} />
+          <TroubleshootingAssistant ticketId={detail.ticket.id} token={token} devices={detail.devices} />
         </div>
       )}
     </main>

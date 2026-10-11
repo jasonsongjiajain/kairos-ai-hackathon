@@ -1,4 +1,9 @@
 import { useCallback, useMemo, useState } from 'react'
+import { Button } from '../../components/ui/button'
+import { Card } from '../../components/ui/card'
+import { Input } from '../../components/ui/input'
+import { Label } from '../../components/ui/label'
+import { Select, SelectItem } from '../../components/ui/select'
 import type { Device } from '../../lib/api/tickets'
 import { TicketsApiError } from '../../lib/api/tickets'
 import {
@@ -84,7 +89,7 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
     setState('executing')
     setError('')
     try {
-      const result = await confirmTool(ticketId, proposal.id, proposal.id, token)
+      const result = await confirmTool(ticketId, proposal.id, proposal.confirmation_id, token)
       setExecution(result)
       setProposal(null)
       setDialogOpen(false)
@@ -104,18 +109,18 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
   }
 
   return (
-    <section className="panel" aria-labelledby="actions-heading">
+    <Card className="panel" aria-labelledby="actions-heading">
       <p className="section-label">AGENT ACTIONS</p>
-      <h3 id="actions-heading">Run a device action</h3>
+      <h3 id="actions-heading">Choose a device action</h3>
       <p className="muted-note">
-        The assistant can propose these allowlisted actions. State-changing actions run only after you
-        review and approve them, and every run is recorded in the ticket audit history.
+        Select an allowlisted action directly. State-changing actions run only after you review and
+        approve them, and every run is recorded in the ticket audit history.
       </p>
 
       {catalogState === 'idle' && (
-        <button className="process-button" type="button" onClick={() => void loadCatalog()}>
+        <Button className="process-button" type="button" onClick={() => void loadCatalog()}>
           Load available actions
-        </button>
+        </Button>
       )}
 
       {catalogState === 'loading' && (
@@ -129,49 +134,50 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
           <p className="form-error" role="alert">
             {catalogError}
           </p>
-          <button className="process-button" type="button" onClick={() => void loadCatalog()}>
+          <Button className="process-button" type="button" onClick={() => void loadCatalog()}>
             Retry loading actions
-          </button>
+          </Button>
         </div>
       )}
 
       {catalogState === 'ready' && catalog && state !== 'done' && (
         <div className="action-form">
-          <label className="field">
+          <Label className="field">
             <span>Action</span>
-            <select
+            <Select
               value={toolName}
-              onChange={(event) => {
-                setToolName(event.target.value)
+              onValueChange={(value) => {
+                setToolName(value)
                 setProposal(null)
                 setState('idle')
               }}
+              aria-label="Action"
             >
               {catalog.map((item) => (
-                <option key={item.name} value={item.name}>
+                <SelectItem key={item.name} value={item.name}>
                   {item.description}
-                </option>
+                </SelectItem>
               ))}
-            </select>
-          </label>
+            </Select>
+          </Label>
 
-          <label className="field">
+          <Label className="field">
             <span>Target device</span>
-            <select value={deviceId} onChange={(event) => setDeviceId(event.target.value)}>
+            <Select value={deviceId} onValueChange={setDeviceId} aria-label="Target device">
               {devices.map((device) => (
-                <option key={device.id} value={device.id}>
+                <SelectItem key={device.id} value={device.id}>
                   {device.device_ref} ({device.device_type})
-                </option>
+                </SelectItem>
               ))}
-            </select>
-          </label>
+            </Select>
+          </Label>
 
           {selected?.name === 'update_config' && (
             <div className="config-grid">
               {CONFIG_FIELDS.map((field) => (
-                <label className="field" key={field.key}>
+                <Label className="field" key={field.key}>
                   <span>{field.label}</span>
-                  <input
+                  <Input
                     type="number"
                     min={field.min}
                     max={field.max}
@@ -180,14 +186,14 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
                       setConfigValues((current) => ({ ...current, [field.key]: event.target.value }))
                     }
                   />
-                </label>
+                </Label>
               ))}
             </div>
           )}
 
-          <button className="process-button" type="button" onClick={() => void prepare()} disabled={state === 'preparing'}>
+          <Button className="process-button" type="button" onClick={() => void prepare()} disabled={state === 'preparing'}>
             {state === 'preparing' ? 'Preparing...' : 'Prepare proposal'}
-          </button>
+          </Button>
 
           {error && (
             <p className="form-error" role="alert">
@@ -217,6 +223,6 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
       )}
 
       {state === 'done' && execution && <ToolExecutionResult execution={execution} onRunAnother={reset} />}
-    </section>
+    </Card>
   )
 }

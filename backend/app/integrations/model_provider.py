@@ -23,6 +23,8 @@ class LocalDeterministicChatProvider:
     """
 
     def complete(self, messages: Sequence[ChatMessage], *, temperature: float = 0.0) -> str:
+        if messages and "Choose a tool from this allowlist" in messages[0].content:
+            return _local_tool_call(messages)
         evidence = _extract_retrieved_chunks(messages)
         if evidence is not None:
             return _synthesize_grounded_answer(evidence)
@@ -172,6 +174,38 @@ def _synthesize_grounded_answer(chunks: Sequence[dict]) -> str:
         },
         separators=(",", ":"),
     )
+
+
+def _local_tool_call(messages: Sequence[ChatMessage]) -> str:
+    request = next((message.content for message in reversed(messages) if message.role == "user"), "")
+    lowered = request.lower()
+    if "reboot" in lowered:
+        tool_name = "reboot_router"
+    elif "config" in lowered or "channel" in lowered:
+        tool_name = "update_config"
+    else:
+        tool_name = "get_device_status"
+
+    device_id = ""
+    data = _first_json_object(request)
+    if isinstance(data, dict):
+        device_id = str(data.get("device_id", ""))
+    arguments: dict[str, object] = {"device_id": device_id}
+    if tool_name == "update_config":
+        arguments["settings"] = {"wifi_channel": 6}
+    return json.dumps({"tool_name": tool_name, "arguments": arguments}, separators=(",", ":"))
+
+
+def _first_json_object(text: str) -> dict | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        value = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _first_sentence(text: str) -> str:

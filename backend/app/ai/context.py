@@ -7,10 +7,11 @@ model prompt.
 
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthenticatedUser
-from app.domain.models import Service
+from app.domain.models import NetworkDevice, NetworkEvent, Service
 from app.domain.schemas import CREDENTIAL_KEYS
 from app.services import ticket_queries
 
@@ -40,6 +41,7 @@ class DeviceContext:
     device_type: str
     name: str
     status: str
+    details: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,7 @@ class BoundedContext:
     devices: list[DeviceContext]
     topology_nodes: list[str]
     topology_edges: list[tuple[str, str]]
+    incident: dict[str, str]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -88,6 +91,7 @@ class BoundedContext:
                 for device in self.devices
             ],
             "topology": {"nodes": self.topology_nodes, "edges": self.topology_edges},
+            "incident": self.incident,
         }
 
     def as_prompt_text(self) -> str:
@@ -97,8 +101,13 @@ class BoundedContext:
         ]
         for service in self.services:
             lines.append(f"Service {service.service_type} {service.service_ref} ({service.status})")
+        if self.incident:
+            observed = ", ".join(f"{key}={value}" for key, value in self.incident.items())
+            lines.append(f"Incident observations: {observed}")
         for device in self.devices:
-            lines.append(f"Device {device.device_ref} {device.device_type} ({device.status})")
+            details = ", ".join(f"{key}={value}" for key, value in device.details.items())
+            suffix = f"; observations: {details}" if details else ""
+            lines.append(f"Device {device.device_ref} {device.device_type} ({device.status}){suffix}")
         if self.topology_edges:
             path = " -> ".join(self.topology_nodes)
             lines.append(f"Topology: {path}")
@@ -109,6 +118,13 @@ def assemble_context(session: Session, ticket_id: str, actor: AuthenticatedUser)
     detail = ticket_queries.get_ticket_detail(session, ticket_id, actor)
     topology = ticket_queries.get_ticket_topology(session, ticket_id, actor)
     ticket = detail.ticket
+    event = session.get(NetworkEvent, ticket.source_event_id)
+    device_details = {
+        device.id: _safe_details(device.details)
+        for device in session.scalars(
+            select(NetworkDevice).where(NetworkDevice.customer_id == detail.customer.id)
+        ).all()
+    }
     node_refs = {node.device_id: node.device_ref for node in topology.nodes}
     return BoundedContext(
         ticket_id=ticket.id,
@@ -119,7 +135,10 @@ def assemble_context(session: Session, ticket_id: str, actor: AuthenticatedUser)
         customer_name=detail.customer.name,
         address=detail.customer.address[:MAX_ADDRESS],
         services=[_service_context(service) for service in detail.services[:MAX_SERVICES]],
-        devices=[_device_context(device) for device in detail.devices[:MAX_DEVICES]],
+        devices=[
+            _device_context(device, device_details.get(device.id, {}))
+            for device in detail.devices[:MAX_DEVICES]
+        ],
         topology_nodes=[node.device_ref for node in topology.nodes[:MAX_TOPOLOGY_NODES]],
         topology_edges=[
             (
@@ -128,6 +147,12 @@ def assemble_context(session: Session, ticket_id: str, actor: AuthenticatedUser)
             )
             for edge in topology.edges[:MAX_TOPOLOGY_EDGES]
         ],
+        incident=_safe_details(
+            {
+                "event_type": event.event_type,
+                **(event.payload or {}),
+            }
+        ) if event is not None else {},
     )
 
 
@@ -140,12 +165,13 @@ def _service_context(service: Service) -> ServiceContext:
     )
 
 
-def _device_context(device: ticket_queries.DeviceRecord) -> DeviceContext:
+def _device_context(device: ticket_queries.DeviceRecord, details: dict[str, str]) -> DeviceContext:
     return DeviceContext(
         device_ref=device.device_ref,
         device_type=device.device_type,
         name=device.name,
         status=device.status,
+        details=details,
     )
 
 

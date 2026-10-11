@@ -1,4 +1,5 @@
 import type { TopologyEdge, TopologyNode } from '../../lib/api/topology'
+import { Badge } from '../../components/ui/badge'
 
 function modifier(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -74,9 +75,9 @@ export function TopologyPath({ nodes, edges, serviceRef }: TopologyPathProps) {
                 <span className="topology-node-meta">
                   {node.device_type} <span className="tabular">{node.device_ref}</span>
                 </span>
-                <span className={`status-pill status-${modifier(node.status)}`}>
+                <Badge className={`status-pill status-${modifier(node.status)}`}>
                   {deviceStatusLabel(node.status)}
-                </span>
+                </Badge>
               </li>
             )
           })}

@@ -9,7 +9,7 @@ export default defineConfig({
     proxy: {
       '/auth': apiTarget,
       '/events': apiTarget,
-      '/tickets': apiTarget,
+      '/tickets': { target: apiTarget, ws: true },
       '/audit': apiTarget,
     },
   },

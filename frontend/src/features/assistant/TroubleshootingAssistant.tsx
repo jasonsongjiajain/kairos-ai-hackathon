@@ -1,6 +1,9 @@
-import { Fragment, useCallback, useRef, useState } from 'react'
+import { Fragment, useCallback, useState } from 'react'
+import { Button } from '../../components/ui/button'
 import { TicketsApiError } from '../../lib/api/tickets'
-import { askAssistant, type AssistantAnswer } from '../../lib/api/assistant'
+import type { Device } from '../../lib/api/tickets'
+import { askAssistantWithStream, type AssistantAnswer } from '../../lib/api/assistant'
+import { AgentSuggestedAction } from './AgentSuggestedAction'
 import { NextBestActionPanel } from '../work/NextBestActionPanel'
 import { AssistantComposer } from './AssistantComposer'
 import { ChatMessage } from './ChatMessage'
@@ -19,6 +22,7 @@ type Turn = {
 type TroubleshootingAssistantProps = {
   ticketId: string
   token: string
+  devices: Device[]
 }
 
 function AssistantAnswerBody({ answer }: { answer: AssistantAnswer }) {
@@ -48,9 +52,9 @@ function AssistantAnswerBody({ answer }: { answer: AssistantAnswer }) {
   )
 }
 
-export function TroubleshootingAssistant({ ticketId, token }: TroubleshootingAssistantProps) {
+export function TroubleshootingAssistant({ ticketId, token, devices }: TroubleshootingAssistantProps) {
   const [turns, setTurns] = useState<Turn[]>([])
-  const nextId = useRef(1)
+  const [nextId, setNextId] = useState(1)
 
   const run = useCallback(
     async (id: number, question: string) => {
@@ -58,7 +62,9 @@ export function TroubleshootingAssistant({ ticketId, token }: TroubleshootingAss
         current.map((turn) => (turn.id === id ? { ...turn, state: 'pending', message: undefined } : turn)),
       )
       try {
-        const answer = await askAssistant(ticketId, question, token)
+        const answer = await askAssistantWithStream(ticketId, question, token, (message) => {
+          setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, message } : turn)))
+        })
         setTurns((current) =>
           current.map((turn) => (turn.id === id ? { ...turn, state: 'answered', answer } : turn)),
         )
@@ -83,8 +89,8 @@ export function TroubleshootingAssistant({ ticketId, token }: TroubleshootingAss
   )
 
   const ask = (question: string) => {
-    const id = nextId.current
-    nextId.current += 1
+    const id = nextId
+    setNextId(id + 1)
     setTurns((current) => [...current, { id, question, state: 'pending' }])
     void run(id, question)
   }
@@ -115,7 +121,7 @@ export function TroubleshootingAssistant({ ticketId, token }: TroubleshootingAss
               {turn.state === 'pending' && (
                 <ChatMessage role="assistant" label="Assistant">
                   <p className="searching-note" role="status">
-                    Searching service guidance...
+                    {turn.message ?? 'Starting ticket investigation...'}
                   </p>
                 </ChatMessage>
               )}
@@ -125,19 +131,27 @@ export function TroubleshootingAssistant({ ticketId, token }: TroubleshootingAss
                   <p className="form-error" role="alert">
                     {turn.message}
                   </p>
-                  <button
+                  <Button
                     className="process-button"
                     type="button"
                     onClick={() => void run(turn.id, turn.question)}
                   >
                     Retry this question
-                  </button>
+                  </Button>
                 </ChatMessage>
               )}
 
               {turn.state === 'answered' && turn.answer && (
                 <ChatMessage role="assistant" label="Assistant">
                   <AssistantAnswerBody answer={turn.answer} />
+                  {turn.answer.has_evidence && (
+                    <AgentSuggestedAction
+                      ticketId={ticketId}
+                      token={token}
+                      question={turn.question}
+                      devices={devices}
+                    />
+                  )}
                 </ChatMessage>
               )}
             </Fragment>

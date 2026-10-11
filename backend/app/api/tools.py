@@ -2,8 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthenticatedUser, get_current_user
+from app.ai.ports import ChatCompletionProvider, EmbeddingProvider
+from app.api.assistant import get_chat_provider, get_embedding_provider
+from app.services.agent_tools import AgentToolProposalError, propose_agent_tool
 from app.db.session import get_session
 from app.domain.tool_schemas import (
+    AgentToolProposeRequest,
     ToolCatalogItemRead,
     ToolConfirmRequest,
     ToolExecutionRead,
@@ -18,6 +22,36 @@ from app.services.tool_execution import (
 )
 
 router = APIRouter(prefix="/tickets", tags=["tools"])
+
+
+@router.post("/{ticket_id}/tools/agent-propose", response_model=ToolProposalRead, status_code=status.HTTP_201_CREATED)
+def agent_propose_tool(
+    ticket_id: str,
+    payload: AgentToolProposeRequest,
+    session: Session = Depends(get_session),
+    user: AuthenticatedUser = Depends(get_current_user),
+    embedder: EmbeddingProvider = Depends(get_embedding_provider),
+    provider: ChatCompletionProvider = Depends(get_chat_provider),
+) -> ToolProposalRead:
+    try:
+        record = propose_agent_tool(
+            session,
+            ticket_id,
+            user,
+            payload.question,
+            payload.device_id,
+            embedder=embedder,
+            provider=provider,
+        )
+    except AgentToolProposalError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    except ToolNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket or tool not found") from error
+    except ToolForbiddenError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This action is not permitted here") from error
+    except ToolValidationError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    return _proposal_read(record)
 
 
 @router.get("/{ticket_id}/tools/catalog", response_model=list[ToolCatalogItemRead])
@@ -56,9 +90,10 @@ def propose_tool(
     session: Session = Depends(get_session),
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> ToolProposalRead:
-    parameters = {"device_id": payload.device_id, **payload.parameters}
+    tool_name, proposed_parameters = _resolve_proposal(payload)
+    parameters = {"device_id": payload.device_id, **proposed_parameters}
     try:
-        record = tool_execution.propose_tool(session, ticket_id, user, payload.tool_name, parameters)
+        record = tool_execution.propose_tool(session, ticket_id, user, tool_name, parameters)
     except ToolNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool or ticket not found") from error
     except ToolForbiddenError as error:
@@ -66,6 +101,24 @@ def propose_tool(
     except ToolValidationError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     return _proposal_read(record)
+
+
+def _resolve_proposal(payload: ToolProposeRequest) -> tuple[str, dict]:
+    if payload.model_proposal is None:
+        return payload.tool_name, payload.parameters
+
+    proposed_name = payload.model_proposal.get("name")
+    proposed_arguments = payload.model_proposal.get("arguments")
+    if proposed_name != payload.tool_name:
+        raise HTTPException(status_code=422, detail="The selected tool does not match the model proposal")
+    if not isinstance(proposed_arguments, dict):
+        raise HTTPException(status_code=422, detail="Model tool arguments must be an object")
+    if proposed_arguments.get("device_id") != payload.device_id:
+        raise HTTPException(status_code=422, detail="Model proposal device does not match the selected device")
+    arguments = {key: value for key, value in proposed_arguments.items() if key != "device_id"}
+    if payload.parameters and arguments != payload.parameters:
+        raise HTTPException(status_code=422, detail="Submitted parameters do not match the model proposal")
+    return payload.tool_name, arguments
 
 
 @router.post("/{ticket_id}/tools/{proposal_id}/confirm", response_model=ToolExecutionRead)
@@ -89,6 +142,8 @@ def confirm_tool(
         ) from error
     except ToolValidationError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    if record.status == tool_execution.PROPOSED:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Tool proposal is awaiting confirmation")
     return _execution_read(record)
 
 
@@ -104,6 +159,7 @@ def _proposal_read(record: tool_execution.ToolProposalRecord) -> ToolProposalRea
         parameters=record.parameters,
         status=record.status,
         summary=record.summary,
+        confirmation_id=record.correlation_id,
         created_at=record.created_at,
     )
 
