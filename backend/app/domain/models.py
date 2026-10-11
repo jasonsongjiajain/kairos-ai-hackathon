@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import Settings
@@ -26,8 +26,8 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
 
 
 class Customer(Base):
@@ -36,7 +36,7 @@ class Customer(Base):
     customer_ref: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     address: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
 
 
 class Service(Base):
@@ -47,7 +47,7 @@ class Service(Base):
     service_type: Mapped[str] = mapped_column(String(40), nullable=False)
     service_ref: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
-    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"), nullable=False)
 
 
 class NetworkDevice(Base):
@@ -57,8 +57,8 @@ class NetworkDevice(Base):
     device_ref: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     device_type: Mapped[str] = mapped_column(String(40), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    status: Mapped[str] = mapped_column(String(40), nullable=False)
-    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="unknown", server_default=text("'unknown'"), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"), nullable=False)
 
 
 class TopologyEdge(Base):
@@ -77,7 +77,7 @@ class NetworkEvent(Base):
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
     device_id: Mapped[str] = mapped_column(ForeignKey("network_devices.id"), nullable=False)
     service_id: Mapped[str | None] = mapped_column(ForeignKey("services.id"))
-    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"), nullable=False)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -90,7 +90,7 @@ class Ticket(Base):
     service_id: Mapped[str | None] = mapped_column(ForeignKey("services.id"))
     assigned_technician_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     severity: Mapped[str] = mapped_column(String(30), nullable=False)
-    status: Mapped[str] = mapped_column(String(30), default="open", nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="open", server_default=text("'open'"), nullable=False)
     summary: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
@@ -128,7 +128,7 @@ class AssistantMessage(Base):
     session_id: Mapped[str] = mapped_column(ForeignKey("assistant_sessions.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(30), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    citations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    citations: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -138,7 +138,7 @@ class ToolExecution(Base):
     ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), nullable=False)
     actor_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    parameters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    parameters: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"), nullable=False)
     outcome: Mapped[str] = mapped_column(String(40), nullable=False)
     correlation_id: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -150,5 +150,5 @@ class AuditEvent(Base):
     actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     ticket_id: Mapped[str | None] = mapped_column(ForeignKey("tickets.id"))
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

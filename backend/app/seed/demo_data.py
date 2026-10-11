@@ -1,9 +1,16 @@
+"""Local synthetic demo seed, disabled unless DEMO_SEED_ENABLED is explicitly true.
+
+Knowledge section headings must be lowercase ASCII slug-safe because they form chunk IDs.
+"""
+
 from pathlib import Path
 
 from argon2 import PasswordHasher
-from sqlalchemy import func, select
+from argon2.exceptions import VerificationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import Settings
 from app.domain.models import (
     Customer, KnowledgeChunk, KnowledgeDocument, NetworkDevice, NetworkEvent,
     Role, Service, TopologyEdge, User,
@@ -13,10 +20,21 @@ DEMO_ACCOUNTS = {
     "operator@demo.invalid": "Demo-Operator-Only-2026!",
     "technician@demo.invalid": "Demo-Technician-Only-2026!",
 }
+DEMO_EVENT_SOURCE_ID = "DEMO-EVENT-ONU-OFFLINE-001"
 KNOWLEDGE_DIR = Path(__file__).resolve().parents[2] / "seed" / "knowledge"
 
 
 def seed_demo_data(session: Session) -> dict[str, int]:
+    if not Settings().demo_seed_enabled:
+        raise RuntimeError("Demo seeding is disabled. Set DEMO_SEED_ENABLED=true only in a local/demo environment.")
+    try:
+        return _seed_demo_data(session)
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _seed_demo_data(session: Session) -> dict[str, int]:
     hasher = PasswordHasher()
     roles = {}
     for name in ("operator", "technician"):
@@ -28,17 +46,32 @@ def seed_demo_data(session: Session) -> dict[str, int]:
         roles[name] = role
 
     account_roles = {"operator@demo.invalid": "operator", "technician@demo.invalid": "technician"}
+    account_names = {"operator@demo.invalid": "Demo Operator", "technician@demo.invalid": "Demo Technician"}
     for email, password in DEMO_ACCOUNTS.items():
         user = session.scalar(select(User).where(User.email == email))
         if user is None:
-            name = "Demo Operator" if "operator" in email else "Demo Technician"
-            session.add(User(email=email, display_name=name, password_hash=hasher.hash(password), role_id=roles[account_roles[email]].id, is_demo=True))
+            user = User(email=email, display_name=account_names[email], password_hash=hasher.hash(password), role_id=roles[account_roles[email]].id, is_active=True, is_demo=True)
+            session.add(user)
+        _require_canonical(
+            user,
+            display_name=account_names[email],
+            role_id=roles[account_roles[email]].id,
+            is_active=True,
+            is_demo=True,
+        )
+        try:
+            password_matches = hasher.verify(user.password_hash, password)
+        except VerificationError:
+            password_matches = False
+        if not password_matches:
+            raise RuntimeError(f"Seed conflict for demo account {email}: password hash does not match demo credentials")
 
     customer = session.scalar(select(Customer).where(Customer.customer_ref == "DEMO-CUST-001"))
     if customer is None:
         customer = Customer(customer_ref="DEMO-CUST-001", name="Sample Household (Demo)", address="100 Example Lane, Sampleton", is_demo=True)
         session.add(customer)
         session.flush()
+    _require_canonical(customer, name="Sample Household (Demo)", address="100 Example Lane, Sampleton", is_demo=True)
 
     services = {}
     for kind, ref in (("Granite", "DEMO-GR-001"), ("HSI", "DEMO-HSI-001"), ("VoBB", "DEMO-VOBB-001")):
@@ -47,6 +80,7 @@ def seed_demo_data(session: Session) -> dict[str, int]:
             service = Service(customer_id=customer.id, service_type=kind, service_ref=ref, status="active", details={"demo": True})
             session.add(service)
             session.flush()
+        _require_canonical(service, customer_id=customer.id, service_type=kind, status="active", details={"demo": True})
         services[kind] = service
 
     devices = {}
@@ -60,15 +94,21 @@ def seed_demo_data(session: Session) -> dict[str, int]:
             device = NetworkDevice(customer_id=customer.id, device_ref=ref, device_type=dtype, name=name, status=status, details=details)
             session.add(device)
             session.flush()
+        _require_canonical(device, customer_id=customer.id, device_type=dtype, name=name, status=status, details=details)
         devices[ref] = device
 
     for upstream, downstream, service in (("DEMO-OLT-001", "DEMO-ONT-001", services["Granite"]), ("DEMO-ONT-001", "DEMO-RTR-001", services["HSI"])):
         exists = session.scalar(select(TopologyEdge).where(TopologyEdge.source_device_id == devices[upstream].id, TopologyEdge.target_device_id == devices[downstream].id))
         if not exists:
-            session.add(TopologyEdge(source_device_id=devices[upstream].id, target_device_id=devices[downstream].id, service_id=service.id))
+            exists = TopologyEdge(source_device_id=devices[upstream].id, target_device_id=devices[downstream].id, service_id=service.id)
+            session.add(exists)
+        _require_canonical(exists, service_id=service.id)
 
-    if session.scalar(select(NetworkEvent).where(NetworkEvent.source_event_id == "DEMO-EVENT-ONU-OFFLINE-001")) is None:
-        session.add(NetworkEvent(source_event_id="DEMO-EVENT-ONU-OFFLINE-001", event_type="ONU_OFFLINE", device_id=devices["DEMO-ONT-001"].id, service_id=services["Granite"].id, payload={"demo": True, "signal_state": "no_link"}))
+    event = session.scalar(select(NetworkEvent).where(NetworkEvent.source_event_id == DEMO_EVENT_SOURCE_ID))
+    if event is None:
+        event = NetworkEvent(source_event_id=DEMO_EVENT_SOURCE_ID, event_type="ONU_OFFLINE", device_id=devices["DEMO-ONT-001"].id, service_id=services["Granite"].id, payload={"demo": True, "signal_state": "no_link"})
+        session.add(event)
+    _require_canonical(event, event_type="ONU_OFFLINE", device_id=devices["DEMO-ONT-001"].id, service_id=services["Granite"].id, payload={"demo": True, "signal_state": "no_link"}, processed_at=None)
 
     for path in sorted(KNOWLEDGE_DIR.glob("*.md")):
         document_id, title, version, *section_data = path.read_text().splitlines()
@@ -77,6 +117,7 @@ def seed_demo_data(session: Session) -> dict[str, int]:
             document = KnowledgeDocument(id=document_id, document_key=document_id, title=title, source_type="curated_procedure", version=version)
             session.add(document)
             session.flush()
+        _require_canonical(document, document_key=document_id, title=title, source_type="curated_procedure", version=version)
         sections = {}
         current = None
         for line in section_data:
@@ -87,11 +128,24 @@ def seed_demo_data(session: Session) -> dict[str, int]:
                 sections[current].append(line.strip())
         for section, lines in sections.items():
             chunk_id = f"{document_id}:{version}:{section.lower().replace(' ', '-')}"
-            if session.get(KnowledgeChunk, chunk_id) is None:
-                session.add(KnowledgeChunk(id=chunk_id, document_id=document.id, section=section, content="\n".join(lines)))
+            content = "\n".join(lines)
+            chunk = session.get(KnowledgeChunk, chunk_id)
+            if chunk is None:
+                chunk = KnowledgeChunk(id=chunk_id, document_id=document.id, section=section, content=content)
+                session.add(chunk)
+            _require_canonical(chunk, document_id=document.id, section=section, content=content)
 
-    session.commit()
-    pending = session.scalar(select(func.count()).select_from(NetworkEvent).where(NetworkEvent.processed_at.is_(None)))
+    session.flush()
+    pending_event = session.scalar(
+        select(NetworkEvent).where(
+            NetworkEvent.source_event_id == DEMO_EVENT_SOURCE_ID,
+            NetworkEvent.event_type == "ONU_OFFLINE",
+            NetworkEvent.processed_at.is_(None),
+        )
+    )
+    if pending_event is None:
+        raise RuntimeError(f"Seed verification failed: expected pending event {DEMO_EVENT_SOURCE_ID} (ONU_OFFLINE)")
+
     expected_roles = {"operator@demo.invalid": "operator", "technician@demo.invalid": "technician"}
     verified_accounts = 0
     for email, role_name in expected_roles.items():
@@ -99,9 +153,16 @@ def seed_demo_data(session: Session) -> dict[str, int]:
         if user is None or user.role_id != roles[role_name].id or not user.is_active:
             raise RuntimeError(f"Seed verification failed for demo account {email}")
         verified_accounts += 1
-    if pending != 1:
-        raise RuntimeError(f"Seed verification failed: pending_events={pending}")
-    return {"pending_events": pending, "demo_accounts": verified_accounts}
+
+    session.commit()
+    return {"pending_events": 1, "demo_accounts": verified_accounts}
+
+
+def _require_canonical(row, **expected_fields) -> None:
+    divergent = [name for name, expected in expected_fields.items() if getattr(row, name) != expected]
+    if divergent:
+        identity = getattr(row, "email", None) or getattr(row, "customer_ref", None) or getattr(row, "service_ref", None) or getattr(row, "device_ref", None) or getattr(row, "source_event_id", None) or getattr(row, "id", "unknown")
+        raise RuntimeError(f"Seed conflict for demo row {identity}: noncanonical fields {', '.join(divergent)}")
 
 
 def main() -> None:

@@ -1,4 +1,6 @@
+import pytest
 from argon2 import PasswordHasher
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.domain.models import (
@@ -6,10 +8,11 @@ from app.domain.models import (
     KnowledgeDocument, NetworkDevice, NetworkEvent, Role, Service, Ticket,
     ToolExecution, TopologyEdge, User,
 )
-from app.seed.demo_data import DEMO_ACCOUNTS, seed_demo_data
+from app.config import Settings
+from app.seed.demo_data import DEMO_ACCOUNTS, DEMO_EVENT_SOURCE_ID, seed_demo_data
 
 
-def test_seed_is_idempotent_and_contains_expected_demo_records(db_session):
+def test_seed_is_idempotent_and_contains_expected_demo_records(db_session, enable_demo_seed):
     seed_demo_data(db_session)
     counts_after_first_run = _seed_counts(db_session)
 
@@ -44,6 +47,70 @@ def test_seed_is_idempotent_and_contains_expected_demo_records(db_session):
     assert all(user.is_active for user in users.values())
 
 
+def test_unrelated_pending_event_does_not_fail_seed_verification(db_session, enable_demo_seed):
+    seed_demo_data(db_session)
+    device = db_session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == "DEMO-ONT-001"))
+    db_session.add(NetworkEvent(
+        source_event_id="UNRELATED-PENDING-EVENT-001",
+        event_type="UNRELATED_TEST_EVENT",
+        device_id=device.id,
+        payload={"test": True},
+    ))
+    db_session.commit()
+
+    assert seed_demo_data(db_session) == {"pending_events": 1, "demo_accounts": 2}
+    assert _count(db_session, NetworkEvent) == 2
+    assert _count(db_session, NetworkEvent, NetworkEvent.processed_at.is_(None)) == 2
+    assert _count(db_session, NetworkEvent, _seeded_pending_event_filter()) == 1
+
+
+def test_seed_fails_clearly_on_divergent_demo_row(db_session, enable_demo_seed):
+    seed_demo_data(db_session)
+    device = db_session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == "DEMO-ONT-001"))
+    device.status = "online"
+    db_session.commit()
+
+    with pytest.raises(RuntimeError, match="Seed conflict.*DEMO-ONT-001.*status"):
+        seed_demo_data(db_session)
+
+    db_session.refresh(device)
+    assert device.status == "online"
+
+
+def test_seed_is_disabled_by_default(db_session, monkeypatch):
+    monkeypatch.delenv("DEMO_SEED_ENABLED", raising=False)
+    with pytest.raises(RuntimeError, match="DEMO_SEED_ENABLED=true"):
+        seed_demo_data(db_session)
+    assert _count(db_session, User) == 0
+
+
+def test_embedding_dimensions_are_fixed_to_initial_schema_size():
+    assert Settings(database_url="sqlite://", jwt_secret="test").embedding_dimensions == 1536
+    with pytest.raises(ValidationError, match="changing it requires a new migration"):
+        Settings(database_url="sqlite://", jwt_secret="test", embedding_dimensions=3072)
+
+
+def test_seed_rolls_back_partial_writes_after_verification_failure(db_session, enable_demo_seed):
+    operator_role = Role(name="operator")
+    db_session.add(operator_role)
+    db_session.flush()
+    db_session.add(User(
+        email="operator@demo.invalid",
+        display_name="Diverged Operator",
+        password_hash=PasswordHasher().hash("synthetic-test-password"),
+        role_id=operator_role.id,
+        is_active=True,
+        is_demo=True,
+    ))
+    db_session.commit()
+
+    with pytest.raises(RuntimeError, match="Seed conflict.*operator@demo.invalid"):
+        seed_demo_data(db_session)
+
+    assert db_session.scalar(select(Role).where(Role.name == "technician")) is None
+    assert _count(db_session, Customer) == 0
+
+
 def _count(session, model, criterion=None):
     statement = select(func.count()).select_from(model)
     if criterion is not None:
@@ -59,7 +126,7 @@ def _seed_counts(session):
         "network_devices": _count(session, NetworkDevice),
         "topology_edges": _count(session, TopologyEdge),
         "network_events": _count(session, NetworkEvent),
-        "pending_events": _count(session, NetworkEvent, NetworkEvent.processed_at.is_(None)),
+        "pending_events": _count(session, NetworkEvent, _seeded_pending_event_filter()),
         "tickets": _count(session, Ticket),
         "knowledge_documents": _count(session, KnowledgeDocument),
         "knowledge_chunks": _count(session, KnowledgeChunk),
@@ -68,3 +135,11 @@ def _seed_counts(session):
         "tool_executions": _count(session, ToolExecution),
         "audit_events": _count(session, AuditEvent),
     }
+
+
+def _seeded_pending_event_filter():
+    return (
+        (NetworkEvent.source_event_id == DEMO_EVENT_SOURCE_ID)
+        & (NetworkEvent.event_type == "ONU_OFFLINE")
+        & NetworkEvent.processed_at.is_(None)
+    )

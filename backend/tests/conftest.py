@@ -18,3 +18,8 @@ def db_session():
     with Session(engine) as session:
         yield session
     engine.dispose()
+
+
+@pytest.fixture
+def enable_demo_seed(monkeypatch):
+    monkeypatch.setenv("DEMO_SEED_ENABLED", "true")

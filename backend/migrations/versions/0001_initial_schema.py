@@ -1,10 +1,11 @@
-"""Initial operational schema and pgvector support."""
+"""Initial operational schema and pgvector support.
+
+The vector size is fixed at 1536. Changing it requires a new migration.
+"""
 
 from alembic import op
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
-
-from app.config import get_settings
 
 revision = "0001_initial_schema"
 down_revision = None
@@ -13,7 +14,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    dimensions = get_settings().embedding_dimensions
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
@@ -30,8 +30,8 @@ def upgrade() -> None:
         sa.Column("display_name", sa.String(length=120), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
         sa.Column("role_id", sa.String(length=36), nullable=False),
-        sa.Column("is_active", sa.Boolean(), nullable=False),
-        sa.Column("is_demo", sa.Boolean(), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
+        sa.Column("is_demo", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.ForeignKeyConstraint(["role_id"], ["roles.id"], name=op.f("fk_users_role_id_roles")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_users")),
         sa.UniqueConstraint("email", name=op.f("uq_users_email")),
@@ -42,7 +42,7 @@ def upgrade() -> None:
         sa.Column("customer_ref", sa.String(length=80), nullable=False),
         sa.Column("name", sa.String(length=160), nullable=False),
         sa.Column("address", sa.String(length=255), nullable=False),
-        sa.Column("is_demo", sa.Boolean(), nullable=False),
+        sa.Column("is_demo", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_customers")),
         sa.UniqueConstraint("customer_ref", name=op.f("uq_customers_customer_ref")),
     )
@@ -53,7 +53,7 @@ def upgrade() -> None:
         sa.Column("service_type", sa.String(length=40), nullable=False),
         sa.Column("service_ref", sa.String(length=100), nullable=False),
         sa.Column("status", sa.String(length=40), nullable=False),
-        sa.Column("details", sa.JSON(), nullable=False),
+        sa.Column("details", sa.JSON(), server_default=sa.text("'{}'"), nullable=False),
         sa.ForeignKeyConstraint(["customer_id"], ["customers.id"], name=op.f("fk_services_customer_id_customers")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_services")),
         sa.UniqueConstraint("service_ref", name=op.f("uq_services_service_ref")),
@@ -66,8 +66,8 @@ def upgrade() -> None:
         sa.Column("device_ref", sa.String(length=100), nullable=False),
         sa.Column("device_type", sa.String(length=40), nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
-        sa.Column("status", sa.String(length=40), nullable=False),
-        sa.Column("details", sa.JSON(), nullable=False),
+        sa.Column("status", sa.String(length=40), server_default=sa.text("'unknown'"), nullable=False),
+        sa.Column("details", sa.JSON(), server_default=sa.text("'{}'"), nullable=False),
         sa.ForeignKeyConstraint(["customer_id"], ["customers.id"], name=op.f("fk_network_devices_customer_id_customers")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_network_devices")),
         sa.UniqueConstraint("device_ref", name=op.f("uq_network_devices_device_ref")),
@@ -101,7 +101,7 @@ def upgrade() -> None:
         sa.Column("event_type", sa.String(length=80), nullable=False),
         sa.Column("device_id", sa.String(length=36), nullable=False),
         sa.Column("service_id", sa.String(length=36), nullable=True),
-        sa.Column("payload", sa.JSON(), nullable=False),
+        sa.Column("payload", sa.JSON(), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("received_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["device_id"], ["network_devices.id"], name=op.f("fk_network_events_device_id_network_devices")),
@@ -115,7 +115,7 @@ def upgrade() -> None:
         sa.Column("document_id", sa.String(length=120), nullable=False),
         sa.Column("section", sa.String(length=160), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("embedding", Vector(dimensions), nullable=True),
+        sa.Column("embedding", Vector(1536), nullable=True),
         sa.ForeignKeyConstraint(["document_id"], ["knowledge_documents.id"], name=op.f("fk_knowledge_chunks_document_id_knowledge_documents")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_knowledge_chunks")),
         sa.UniqueConstraint("document_id", "section", name="uq_chunk_document_section"),
@@ -128,7 +128,7 @@ def upgrade() -> None:
         sa.Column("service_id", sa.String(length=36), nullable=True),
         sa.Column("assigned_technician_id", sa.String(length=36), nullable=False),
         sa.Column("severity", sa.String(length=30), nullable=False),
-        sa.Column("status", sa.String(length=30), nullable=False),
+        sa.Column("status", sa.String(length=30), server_default=sa.text("'open'"), nullable=False),
         sa.Column("summary", sa.String(length=255), nullable=False),
         sa.ForeignKeyConstraint(["assigned_technician_id"], ["users.id"], name=op.f("fk_tickets_assigned_technician_id_users")),
         sa.ForeignKeyConstraint(["customer_id"], ["customers.id"], name=op.f("fk_tickets_customer_id_customers")),
@@ -153,7 +153,7 @@ def upgrade() -> None:
         sa.Column("session_id", sa.String(length=36), nullable=False),
         sa.Column("role", sa.String(length=30), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("citations", sa.JSON(), nullable=False),
+        sa.Column("citations", sa.JSON(), server_default=sa.text("'[]'"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["session_id"], ["assistant_sessions.id"], name=op.f("fk_assistant_messages_session_id_assistant_sessions")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_assistant_messages")),
@@ -164,7 +164,7 @@ def upgrade() -> None:
         sa.Column("ticket_id", sa.String(length=36), nullable=False),
         sa.Column("actor_id", sa.String(length=36), nullable=False),
         sa.Column("tool_name", sa.String(length=100), nullable=False),
-        sa.Column("parameters", sa.JSON(), nullable=False),
+        sa.Column("parameters", sa.JSON(), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("outcome", sa.String(length=40), nullable=False),
         sa.Column("correlation_id", sa.String(length=120), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -179,7 +179,7 @@ def upgrade() -> None:
         sa.Column("actor_id", sa.String(length=36), nullable=True),
         sa.Column("ticket_id", sa.String(length=36), nullable=True),
         sa.Column("event_type", sa.String(length=100), nullable=False),
-        sa.Column("details", sa.JSON(), nullable=False),
+        sa.Column("details", sa.JSON(), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["actor_id"], ["users.id"], name=op.f("fk_audit_events_actor_id_users")),
         sa.ForeignKeyConstraint(["ticket_id"], ["tickets.id"], name=op.f("fk_audit_events_ticket_id_tickets")),
