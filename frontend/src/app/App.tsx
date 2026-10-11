@@ -4,6 +4,7 @@ import { ProtectedRoute, SignInRoute } from '../features/auth/ProtectedRoute'
 import { EventIntakeQueue } from '../features/intake/EventIntakeQueue'
 import { AssignedWorkList } from '../features/work/AssignedWorkList'
 import { TicketPage } from '../features/work/TicketPage'
+import { AuditPage } from '../features/audit/AuditPage'
 
 function Workspace() {
   const { signOut } = useAuth()
@@ -51,6 +52,7 @@ export default function App() {
             element={<ProtectedRoute allowedRoles={['technician', 'operator', 'supervisor']} />}
           >
             <Route path="/tickets/:ticketId" element={<TicketPage />} />
+            <Route path="/tickets/:ticketId/audit" element={<AuditPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/sign-in" replace />} />
         </Routes>

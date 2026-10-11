@@ -8,6 +8,7 @@ import { TroubleshootingAssistant } from '../assistant/TroubleshootingAssistant'
 import { CustomerServiceSummary } from './CustomerServiceSummary'
 import { SensitiveCredentialReveal } from './SensitiveCredentialReveal'
 import { TicketHeader } from './TicketHeader'
+import { AgentActionsPanel } from '../assistant/AgentActionsPanel'
 
 type PageState = 'loading' | 'ready' | 'error' | 'denied'
 type TopologyState = 'loading' | 'ready' | 'error'
@@ -116,6 +117,11 @@ export function TicketPage() {
       {pageState === 'ready' && detail && (
         <div className="ticket-page">
           <TicketHeader detail={detail} />
+          <p className="ticket-audit-link">
+            <Link className="inline-link" to={`/tickets/${detail.ticket.id}/audit`}>
+              View audit history
+            </Link>
+          </p>
           <CustomerServiceSummary
             customer={detail.customer}
             services={detail.services}
@@ -151,6 +157,8 @@ export function TicketPage() {
           </section>
 
           <SensitiveCredentialReveal ticketId={detail.ticket.id} token={token} devices={detail.devices} />
+
+          <AgentActionsPanel ticketId={detail.ticket.id} token={token} devices={detail.devices} />
 
           <TroubleshootingAssistant ticketId={detail.ticket.id} token={token} />
         </div>

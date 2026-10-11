@@ -140,6 +140,7 @@ class ToolExecution(Base):
     tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
     parameters: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"), nullable=False)
     outcome: Mapped[str] = mapped_column(String(40), nullable=False)
+    message: Mapped[str | None] = mapped_column(String(400))
     correlation_id: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

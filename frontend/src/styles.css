@@ -1038,7 +1038,164 @@ h1 {
 
 .citation-summary:focus-visible,
 .assistant-composer textarea:focus-visible,
-.assistant-submit:focus-visible {
+.assistant-submit:focus-visible,
+.proposal-card button:focus-visible,
+.action-form select:focus-visible,
+.action-form input:focus-visible,
+.dialog button:focus-visible,
+.audit-entry:focus-visible {
   outline: 3px solid #344c2b;
   outline-offset: 3px;
+}
+
+.ticket-audit-link {
+  margin: 0 0 16px;
+}
+
+.action-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.action-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.action-form select,
+.action-form input {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #8a8f84;
+  border-radius: 4px;
+  background: #fff;
+  color: #20251f;
+  font: inherit;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.proposal-card {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid #b9bdb2;
+  border-left: 4px solid #2b4023;
+  border-radius: 4px;
+  background: #fbfaf6;
+}
+
+.proposal-header h4 {
+  margin: 4px 0 8px;
+  font-size: 1rem;
+}
+
+.proposal-details {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.proposal-details dt {
+  color: #495b42;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.proposal-details dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(24, 28, 22, 0.6);
+  z-index: 10;
+}
+
+.dialog {
+  width: min(100%, 460px);
+  padding: 20px;
+  border-radius: 6px;
+  background: #fbfaf6;
+  box-shadow: 0 12px 32px rgba(20, 24, 18, 0.35);
+}
+
+.dialog h3 {
+  margin: 0 0 8px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.execution-result {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid #b9bdb2;
+  border-radius: 4px;
+  background: #fbfaf6;
+}
+
+.execution-status {
+  margin: 0 0 8px;
+  font-weight: 750;
+}
+
+.execution-status.is-success {
+  color: #21451a;
+}
+
+.execution-status.is-failure {
+  color: #7a1f1f;
+}
+
+.audit-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.audit-entry {
+  padding: 12px 0;
+  border-top: 1px solid #d6d6cc;
+}
+
+.audit-entry:first-child {
+  border-top: none;
+}
+
+.audit-type {
+  margin: 0 0 4px;
+  font-weight: 700;
+}
+
+.audit-meta {
+  margin: 0 0 6px;
+  color: #495b42;
+  font-size: 0.82rem;
+}
+
+.audit-details {
+  margin: 0;
+  padding-left: 18px;
+  color: #3c423a;
+  font-size: 0.86rem;
+  line-height: 1.5;
 }
