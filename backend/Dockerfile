@@ -7,6 +7,9 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY app ./app
+COPY alembic.ini ./alembic.ini
+COPY migrations ./migrations
+COPY seed ./seed
 RUN pip install --no-cache-dir .
 
 EXPOSE 8000

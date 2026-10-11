@@ -92,10 +92,16 @@ def seed_demo_data(session: Session) -> dict[str, int]:
 
     session.commit()
     pending = session.scalar(select(func.count()).select_from(NetworkEvent).where(NetworkEvent.processed_at.is_(None)))
-    accounts = session.scalar(select(func.count()).select_from(User).where(User.email.in_(DEMO_ACCOUNTS)))
-    if pending != 1 or accounts != len(DEMO_ACCOUNTS):
-        raise RuntimeError(f"Seed verification failed: pending_events={pending}, demo_accounts={accounts}")
-    return {"pending_events": pending, "demo_accounts": accounts}
+    expected_roles = {"operator@demo.invalid": "operator", "technician@demo.invalid": "technician"}
+    verified_accounts = 0
+    for email, role_name in expected_roles.items():
+        user = session.scalar(select(User).where(User.email == email))
+        if user is None or user.role_id != roles[role_name].id or not user.is_active:
+            raise RuntimeError(f"Seed verification failed for demo account {email}")
+        verified_accounts += 1
+    if pending != 1:
+        raise RuntimeError(f"Seed verification failed: pending_events={pending}")
+    return {"pending_events": pending, "demo_accounts": verified_accounts}
 
 
 def main() -> None:

@@ -111,7 +111,7 @@ class KnowledgeChunk(Base):
     document_id: Mapped[str] = mapped_column(ForeignKey("knowledge_documents.id"), nullable=False)
     section: Mapped[str] = mapped_column(String(160), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(Settings.model_fields["embedding_dimensions"].default))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(Settings().embedding_dimensions))
 
 
 class AssistantSession(Base):
