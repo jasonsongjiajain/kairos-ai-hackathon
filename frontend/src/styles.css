@@ -819,3 +819,226 @@ h1 {
     padding: 0;
   }
 }
+
+/* Task 7: troubleshooting assistant, evidence citations, next best action */
+
+.assistant-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.assistant-empty {
+  padding: 14px;
+  border: 1px dashed #c8c8bc;
+  border-radius: 4px;
+  background: #f7f8f3;
+}
+
+.chat-thread {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-message {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid #c8c8bc;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.chat-message-user {
+  border-left: 6px solid #495b42;
+  background: #f7f8f3;
+}
+
+.chat-message-assistant {
+  border-left: 6px solid #344c2b;
+}
+
+.chat-role {
+  margin: 0;
+  color: #454a43;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chat-body p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.chat-body p:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-answer {
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-uncertainty {
+  padding: 8px 10px;
+  border-left: 4px solid #7a4a00;
+  background: #faf0dc;
+  color: #4a3200;
+  line-height: 1.5;
+}
+
+.no-evidence-note {
+  padding: 8px 10px;
+  border-left: 4px solid #454a43;
+  background: #ecece4;
+  color: #33372f;
+  line-height: 1.5;
+}
+
+.searching-note {
+  margin: 0;
+  color: #454a43;
+  font-weight: 650;
+}
+
+.citation-block h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.citation-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.citation-details {
+  border: 1px solid #e4e3da;
+  border-radius: 4px;
+  background: #f7f8f3;
+}
+
+.citation-summary {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.citation-index {
+  color: #495b42;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.citation-section {
+  color: #454a43;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.citation-body {
+  padding: 0 12px 12px;
+}
+
+.citation-content {
+  margin: 0 0 8px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.citation-meta {
+  margin: 0;
+  color: #454a43;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.assistant-composer {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.assistant-composer textarea {
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px;
+  border: 1px solid #77796f;
+  border-radius: 4px;
+  color: #20251f;
+  background: #fff;
+  font: inherit;
+  resize: vertical;
+}
+
+.assistant-submit {
+  justify-self: start;
+}
+
+.chat-message .process-button {
+  justify-self: start;
+}
+
+.nba-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 14px;
+  border: 1px solid #344c2b;
+  border-radius: 4px;
+  background: #eef2e9;
+}
+
+.nba-panel h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.nba-scope {
+  margin: 0;
+  color: #33372f;
+  line-height: 1.5;
+}
+
+.nba-advice {
+  display: grid;
+  gap: 4px;
+}
+
+.nba-advice-label {
+  margin: 0;
+  color: #2b4023;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nba-advice-text {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.nba-evidence {
+  margin: 0;
+  color: #454a43;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.citation-summary:focus-visible,
+.assistant-composer textarea:focus-visible,
+.assistant-submit:focus-visible {
+  outline: 3px solid #344c2b;
+  outline-offset: 3px;
+}

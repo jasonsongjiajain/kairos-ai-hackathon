@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { TicketsApiError, fetchTicket, type TicketDetail } from '../../lib/api/tickets'
 import { fetchTicketTopology, type TopologyPath as TopologyPathData } from '../../lib/api/topology'
 import { TopologyPath } from '../topology/TopologyPath'
+import { TroubleshootingAssistant } from '../assistant/TroubleshootingAssistant'
 import { CustomerServiceSummary } from './CustomerServiceSummary'
 import { SensitiveCredentialReveal } from './SensitiveCredentialReveal'
 import { TicketHeader } from './TicketHeader'
@@ -150,6 +151,8 @@ export function TicketPage() {
           </section>
 
           <SensitiveCredentialReveal ticketId={detail.ticket.id} token={token} devices={detail.devices} />
+
+          <TroubleshootingAssistant ticketId={detail.ticket.id} token={token} />
         </div>
       )}
     </main>

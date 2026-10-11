@@ -5,7 +5,7 @@ tests and offline. A hosted OpenAI-compatible provider can replace it.
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 import httpx
 
@@ -14,13 +14,18 @@ from app.config import Settings
 
 
 class LocalDeterministicChatProvider:
-    """Key-free stub used for local runs and tests.
+    """Key-free provider used for local runs and tests.
 
-    It returns a deterministic echo rather than pretending to reason, so it can
-    never fabricate evidence; the assistant layer supplies retrieved citations.
+    When the caller supplies retrieved evidence, it returns a valid structured
+    assistant answer grounded only in those chunks, so the grounded path and its
+    citation validation run without an external model. Without evidence it falls
+    back to a deterministic echo rather than pretending to reason.
     """
 
     def complete(self, messages: Sequence[ChatMessage], *, temperature: float = 0.0) -> str:
+        evidence = _extract_retrieved_chunks(messages)
+        if evidence is not None:
+            return _synthesize_grounded_answer(evidence)
         last_user = next((message.content for message in reversed(messages) if message.role == "user"), "")
         return json.dumps(
             {"provider": "local-deterministic", "prompt_excerpt": last_user[:200]},
@@ -76,3 +81,117 @@ def build_chat_provider(settings: Settings) -> ChatCompletionProvider:
             model=settings.model_name,
         )
     raise ValueError(f"Unknown MODEL_PROVIDER: {settings.model_provider}")
+
+
+def _extract_retrieved_chunks(messages: Sequence[ChatMessage]) -> list[dict] | None:
+    for message in reversed(messages):
+        if message.role != "user":
+            continue
+        outermost = _outermost_object(message.content)
+        if outermost is not None:
+            chunks = _chunks_from(outermost)
+            if chunks is not None:
+                return chunks
+        for candidate in _iter_json_objects(message.content):
+            chunks = _chunks_from(candidate)
+            if chunks is not None:
+                return chunks
+    return None
+
+
+def _chunks_from(text: str) -> list[dict] | None:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    chunks = parsed.get("chunks") if isinstance(parsed, dict) else None
+    if isinstance(chunks, list):
+        return [chunk for chunk in chunks if isinstance(chunk, dict)]
+    return None
+
+
+def _outermost_object(text: str) -> str | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return text[start : end + 1]
+
+
+def _synthesize_grounded_answer(chunks: Sequence[dict]) -> str:
+    usable = [
+        chunk
+        for chunk in chunks
+        if isinstance(chunk.get("chunk_id"), str)
+        and isinstance(chunk.get("content"), str)
+        and chunk["content"].strip()
+    ]
+    if not usable:
+        return json.dumps(
+            {
+                "answer": "No retrieved evidence was usable for this question.",
+                "citations": [],
+                "uncertainty": "",
+                "next_best_action": None,
+            },
+            separators=(",", ":"),
+        )
+
+    primary = usable[0]
+    citations = [
+        {
+            "chunk_id": chunk["chunk_id"],
+            "document_title": str(chunk.get("document_title", "")),
+            "section": str(chunk.get("section", "")),
+        }
+        for chunk in usable[:2]
+    ]
+    first_step = _first_sentence(primary["content"])
+    title = str(primary.get("document_title", "the retrieved procedure"))
+    answer = (
+        f"Retrieved procedural evidence from {title} states: {first_step} "
+        "Treat this as a recommendation from the cited procedure and confirm against the observed "
+        "ticket data on site."
+    )
+    dispatch_required = any(
+        keyword in primary["content"].lower() for keyword in ("escalate", "dispatch", "site visit")
+    )
+    next_best_action = {
+        "remediation": first_step,
+        "dispatch_required": dispatch_required,
+        "suggestion": None,
+        "evidence": [primary["chunk_id"]],
+        "suggestion_evidence": [],
+    }
+    return json.dumps(
+        {
+            "answer": answer,
+            "citations": citations,
+            "uncertainty": "Deterministic local provider; confirm against the cited section.",
+            "next_best_action": next_best_action,
+        },
+        separators=(",", ":"),
+    )
+
+
+def _first_sentence(text: str) -> str:
+    stripped = text.strip()
+    for index, character in enumerate(stripped):
+        if character in ".!?" and index + 1 < len(stripped):
+            return stripped[: index + 1].strip()
+    return stripped
+
+
+def _iter_json_objects(text: str) -> Iterator[str]:
+    depth = 0
+    start: int | None = None
+    for index, character in enumerate(text):
+        if character == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif character == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                yield text[start : index + 1]
+                start = None
