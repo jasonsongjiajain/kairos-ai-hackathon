@@ -1,23 +1,21 @@
-import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from '../features/auth/AuthProvider'
 import { ProtectedRoute, SignInRoute } from '../features/auth/ProtectedRoute'
 import { EventIntakeQueue } from '../features/intake/EventIntakeQueue'
+import { AssignedWorkList } from '../features/work/AssignedWorkList'
+import { TicketPage } from '../features/work/TicketPage'
 
 function Workspace() {
-  const { session, signOut } = useAuth()
-  const destination = session?.role === 'technician' ? 'Assigned work' : 'Operations queue'
+  const { signOut } = useAuth()
   return (
     <main className="app-shell">
       <header className="app-header">
         <p className="app-context">FIELD OPERATIONS</p>
         <h1>Field Force Incident Assistant</h1>
-      </header>
-      <section className="welcome" aria-labelledby="workspace-heading">
-        <p className="section-label">{session?.role === 'technician' ? 'TECHNICIAN' : 'OPERATOR'}</p>
-        <h2 id="workspace-heading">{destination}</h2>
-        <p>Your field workspace will appear here.</p>
+        <p className="section-label">TECHNICIAN</p>
         <button className="text-button" type="button" onClick={signOut}>Sign out</button>
-      </section>
+      </header>
+      <AssignedWorkList />
     </main>
   )
 }
@@ -37,25 +35,6 @@ function OperationsWorkspace() {
   )
 }
 
-// TODO(Task 5): replace this placeholder with the real ticket workspace.
-function TicketWorkspacePlaceholder() {
-  const { ticketId } = useParams()
-  return (
-    <main className="app-shell">
-      <header className="app-header">
-        <p className="app-context">FIELD OPERATIONS</p>
-        <h1>Ticket workspace</h1>
-      </header>
-      <section className="welcome" aria-labelledby="ticket-heading">
-        <p className="section-label">TICKET</p>
-        <h2 id="ticket-heading">Ticket {ticketId}</h2>
-        <p>The full ticket workspace is built in the next step.</p>
-        <Link className="inline-link" to="/operations">Back to event intake</Link>
-      </section>
-    </main>
-  )
-}
-
 export default function App() {
   return (
     <AuthProvider>
@@ -71,7 +50,7 @@ export default function App() {
           <Route
             element={<ProtectedRoute allowedRoles={['technician', 'operator', 'supervisor']} />}
           >
-            <Route path="/tickets/:ticketId" element={<TicketWorkspacePlaceholder />} />
+            <Route path="/tickets/:ticketId" element={<TicketPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/sign-in" replace />} />
         </Routes>
