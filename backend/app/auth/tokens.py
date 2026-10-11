@@ -7,6 +7,7 @@ from app.config import get_settings
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL = timedelta(minutes=15)
+SUPPORTED_ROLES = frozenset({"operator", "technician", "supervisor"})
 
 
 def create_access_token(user_id: str, role: str, *, now: datetime | None = None) -> tuple[str, datetime]:
@@ -22,15 +23,23 @@ def create_access_token(user_id: str, role: str, *, now: datetime | None = None)
 
 def decode_access_token(token: str) -> dict[str, str]:
     try:
-        payload = jwt.decode(token, get_settings().jwt_secret, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            get_settings().jwt_secret,
+            algorithms=[ALGORITHM],
+            options={"require": ["sub", "role", "iat", "exp"]},
+        )
         subject = payload.get("sub")
         role = payload.get("role")
-        if (
-            not isinstance(subject, str)
-            or not isinstance(role, str)
-            or not isinstance(payload.get("exp"), (int, float))
-        ):
+        issued_at = payload.get("iat")
+        if not isinstance(subject, str) or not subject:
             raise InvalidTokenError("Required claims are missing")
+        if not isinstance(role, str) or role not in SUPPORTED_ROLES:
+            raise InvalidTokenError("Unsupported role")
+        if not isinstance(issued_at, (int, float)) or isinstance(issued_at, bool):
+            raise InvalidTokenError("Invalid issued-at claim")
+        if issued_at > datetime.now(UTC).timestamp():
+            raise InvalidTokenError("Token issue time is in the future")
         return {"sub": subject, "role": role}
     except InvalidTokenError as error:
         raise ValueError("Invalid or expired access token") from error

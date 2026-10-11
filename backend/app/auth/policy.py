@@ -22,8 +22,10 @@ def require_customer_scope(
     ticket_customer_id: str,
     requested_customer_id: str,
 ) -> None:
+    if requested_customer_id != ticket_customer_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
     if user_role == "technician":
-        if user_id != ticket_assignee_id or requested_customer_id != ticket_customer_id:
+        if user_id != ticket_assignee_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
         return
     require_role(user_role, allowed_roles)

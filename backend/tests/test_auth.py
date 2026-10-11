@@ -101,3 +101,47 @@ def test_protected_route_rejects_missing_and_expired_tokens(db_session):
 
     assert missing.status_code == 401
     assert expired.status_code == 401
+
+
+def test_protected_route_rejects_malformed_and_unsupported_role_tokens(db_session):
+    role = Role(name="technician")
+    db_session.add(role)
+    db_session.flush()
+    user = User(
+        email="field@example.test",
+        display_name="Field Technician",
+        password_hash=hash_password("correct horse battery"),
+        role_id=role.id,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    now = datetime.now(UTC)
+    malformed_claims = jwt.encode(
+        {"sub": user.id, "role": "technician", "exp": now + timedelta(minutes=5)},
+        get_settings().jwt_secret,
+        algorithm=ALGORITHM,
+    )
+    wrong_role_claims = jwt.encode(
+        {"sub": user.id, "role": "auditor", "iat": now, "exp": now + timedelta(minutes=5)},
+        get_settings().jwt_secret,
+        algorithm=ALGORITHM,
+    )
+    future_issue_claims = jwt.encode(
+        {"sub": user.id, "role": "technician", "iat": now + timedelta(minutes=5), "exp": now + timedelta(minutes=10)},
+        get_settings().jwt_secret,
+        algorithm=ALGORITHM,
+    )
+
+    app.dependency_overrides[get_session] = lambda: db_session
+    try:
+        client = TestClient(app)
+        malformed = client.get("/auth/me", headers={"Authorization": f"Bearer {malformed_claims}"})
+        wrong_role = client.get("/auth/me", headers={"Authorization": f"Bearer {wrong_role_claims}"})
+        future_issue = client.get("/auth/me", headers={"Authorization": f"Bearer {future_issue_claims}"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert malformed.status_code == 401
+    assert wrong_role.status_code == 401
+    assert future_issue.status_code == 401

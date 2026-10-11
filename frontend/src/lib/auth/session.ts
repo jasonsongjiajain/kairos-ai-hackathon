@@ -17,7 +17,7 @@ export function readSession(now = Date.now()): AuthSession | null {
     if (!raw) return null
     const parsed = storedSessionSchema.safeParse(JSON.parse(raw))
     if (!parsed.success || !Number.isFinite(parsed.data.expiresAt) || parsed.data.expiresAt <= now) {
-      window.sessionStorage.removeItem(storageKey)
+      clearSession()
       return null
     }
     return parsed.data
@@ -26,13 +26,24 @@ export function readSession(now = Date.now()): AuthSession | null {
   }
 }
 
-export function writeSession(session: AuthSession): void {
-  const parsed = storedSessionSchema.parse(session)
-  window.sessionStorage.setItem(storageKey, JSON.stringify(parsed))
+export function writeSession(session: AuthSession): boolean {
+  const parsed = storedSessionSchema.safeParse(session)
+  if (!parsed.success) return false
+  try {
+    window.sessionStorage.setItem(storageKey, JSON.stringify(parsed.data))
+    return true
+  } catch {
+    return false
+  }
 }
 
-export function clearSession(): void {
-  window.sessionStorage.removeItem(storageKey)
+export function clearSession(): boolean {
+  try {
+    window.sessionStorage.removeItem(storageKey)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function isSessionExpired(session: AuthSession, now = Date.now()): boolean {

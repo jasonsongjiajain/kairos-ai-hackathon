@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { clearSession, readSession, writeSession, type AuthSession } from '../../lib/auth/session'
+import { clearSession, isSessionExpired, readSession, writeSession, type AuthSession } from '../../lib/auth/session'
 
 type AuthContextValue = {
   session: AuthSession | null
@@ -8,6 +8,8 @@ type AuthContextValue = {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+const MAX_TIMEOUT_MS = 2_147_483_647
+const SIGN_IN_STORAGE_ERROR = 'This browser could not save the sign-in session. Enable session storage and try again.'
 
 type LoginResponse = {
   access_token: string
@@ -21,11 +23,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!session) return
-    const timeout = window.setTimeout(() => {
-      clearSession()
-      setSession(null)
-    }, Math.max(0, session.expiresAt - Date.now()))
-    return () => window.clearTimeout(timeout)
+    let timeoutId: number | undefined
+    let cancelled = false
+    const scheduleExpiryCheck = () => {
+      const remaining = session.expiresAt - Date.now()
+      if (remaining <= 0) {
+        clearSession()
+        setSession((current) => current?.accessToken === session.accessToken ? null : current)
+        return
+      }
+      timeoutId = window.setTimeout(scheduleExpiryCheck, Math.min(remaining, MAX_TIMEOUT_MS))
+    }
+    const checkExpiry = () => {
+      if (!cancelled) scheduleExpiryCheck()
+    }
+    timeoutId = window.setTimeout(checkExpiry, Math.min(Math.max(0, session.expiresAt - Date.now()), MAX_TIMEOUT_MS))
+    return () => {
+      cancelled = true
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+    }
   }, [session])
 
   const signIn = useCallback(async (email: string, password: string) => {
@@ -49,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: result.role,
       expiresAt,
     }
-    writeSession(nextSession)
+    if (!writeSession(nextSession)) throw new Error(SIGN_IN_STORAGE_ERROR)
     setSession(nextSession)
   }, [])
 
