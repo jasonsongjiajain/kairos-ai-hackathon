@@ -12,7 +12,11 @@ class Settings(BaseSettings):
     jwt_secret: str
     model_api_key: str = "LOCAL_ONLY_NO_PROVIDER_KEY_CONFIGURED"
     model_name: str = "LOCAL_ONLY_SELECT_A_PROVIDER_MODEL"
+    model_base_url: str = "LOCAL_ONLY_NO_PROVIDER_BASE_URL_CONFIGURED"
     embedding_model: str = "LOCAL_ONLY_SELECT_A_PROVIDER_EMBEDDING_MODEL"
+    # "local" keeps the app key-free; "hosted" routes through an OpenAI-compatible API.
+    embedding_provider: str = "local"
+    model_provider: str = "local"
 
     @field_validator("embedding_dimensions")
     @classmethod
