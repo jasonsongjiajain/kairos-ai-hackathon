@@ -13,17 +13,20 @@ def require_assigned_ticket(user_id: str, assigned_technician_id: str, user_role
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
 
 
-def require_customer_scope(user_id: str, customer_owner_id: str, user_role: str) -> None:
-    if user_role == "technician" and user_id != customer_owner_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
-
-
-def require_customer_for_assigned_ticket(
+def require_customer_scope(
     user_id: str,
-    ticket_assignee_id: str,
     user_role: str,
+    *,
+    allowed_roles: Iterable[str],
+    ticket_assignee_id: str,
+    ticket_customer_id: str,
+    requested_customer_id: str,
 ) -> None:
-    require_assigned_ticket(user_id, ticket_assignee_id, user_role)
+    if user_role == "technician":
+        if user_id != ticket_assignee_id or requested_customer_id != ticket_customer_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+        return
+    require_role(user_role, allowed_roles)
 
 
 def require_audit_scope(user_id: str, audit_actor_id: str | None, user_role: str) -> None:

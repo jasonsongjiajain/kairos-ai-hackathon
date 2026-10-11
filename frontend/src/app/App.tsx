@@ -27,8 +27,10 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/sign-in" element={<SignInRoute />} />
-          <Route element={<ProtectedRoute />}>
+          <Route element={<ProtectedRoute allowedRoles={['technician']} />}>
             <Route path="/work" element={<Workspace />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['operator', 'supervisor']} />}>
             <Route path="/operations" element={<Workspace />} />
           </Route>
           <Route path="*" element={<Navigate to="/sign-in" replace />} />

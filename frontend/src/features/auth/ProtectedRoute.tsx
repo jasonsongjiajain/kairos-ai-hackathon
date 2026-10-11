@@ -2,15 +2,26 @@ import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from './AuthProvider'
 import { SignInForm } from './SignInForm'
 
-export function ProtectedRoute() {
+export type WorkspaceRole = 'operator' | 'supervisor' | 'technician'
+
+export function landingPath(role: string): string {
+  if (role === 'technician') return '/work'
+  if (role === 'operator' || role === 'supervisor') return '/operations'
+  return '/sign-in'
+}
+
+export function ProtectedRoute({ allowedRoles }: { allowedRoles: readonly WorkspaceRole[] }) {
   const { session } = useAuth()
   if (!session) return <Navigate to="/sign-in" replace />
+  if (!allowedRoles.includes(session.role as WorkspaceRole)) {
+    return <Navigate to={landingPath(session.role)} replace />
+  }
   return <Outlet />
 }
 
 export function SignInRoute() {
   const { session } = useAuth()
-  if (session) return <Navigate to={session.role === 'technician' ? '/work' : '/operations'} replace />
+  if (session) return <Navigate to={landingPath(session.role)} replace />
   return (
     <main className="app-shell sign-in-shell">
       <header className="app-header">
