@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    embedding_dimensions: int = 1536
     database_url: str
     jwt_secret: str
     model_api_key: str = "LOCAL_ONLY_NO_PROVIDER_KEY_CONFIGURED"
