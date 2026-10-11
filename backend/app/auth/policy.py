@@ -1,0 +1,31 @@
+from collections.abc import Iterable
+
+from fastapi import HTTPException, status
+
+
+def require_role(user_role: str, allowed_roles: Iterable[str]) -> None:
+    if user_role not in allowed_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role")
+
+
+def require_assigned_ticket(user_id: str, assigned_technician_id: str, user_role: str) -> None:
+    if user_role == "technician" and user_id != assigned_technician_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+
+
+def require_customer_scope(user_id: str, customer_owner_id: str, user_role: str) -> None:
+    if user_role == "technician" and user_id != customer_owner_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+
+
+def require_customer_for_assigned_ticket(
+    user_id: str,
+    ticket_assignee_id: str,
+    user_role: str,
+) -> None:
+    require_assigned_ticket(user_id, ticket_assignee_id, user_role)
+
+
+def require_audit_scope(user_id: str, audit_actor_id: str | None, user_role: str) -> None:
+    if user_role == "technician" and audit_actor_id != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit record not found")
