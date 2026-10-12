@@ -6,9 +6,12 @@ inject deterministic fakes and deployment can swap in a hosted provider.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    from app.ai.embedding_space import EmbeddingSpace
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,7 @@ class ChunkMatch:
 
 class EmbeddingProvider(Protocol):
     dimension: int
+    profile: str
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
 
@@ -48,4 +52,5 @@ class VectorSearch(Protocol):
         *,
         service_category: str | None,
         limit: int,
+        embedding_space: "EmbeddingSpace",
     ) -> list[ChunkMatch]: ...

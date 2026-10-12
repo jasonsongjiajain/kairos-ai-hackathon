@@ -8,6 +8,18 @@ export default defineConfig({
   server: {
     proxy: {
       '/auth': apiTarget,
+      '/portal': {
+        target: apiTarget,
+        bypass(req) {
+          if (req.headers.accept?.includes('text/html')) return '/index.html'
+        },
+      },
+      '/admin': {
+        target: apiTarget,
+        bypass(req) {
+          if (req.headers.accept?.includes('text/html')) return '/index.html'
+        },
+      },
       '/events': apiTarget,
       '/tickets': { target: apiTarget, ws: true },
       '/audit': apiTarget,

@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.ports import ChatCompletionProvider, EmbeddingProvider
+from app.ai.embedding_space import EmbeddingError
 from app.auth.dependencies import AuthenticatedUser, get_current_user
 from app.auth.tokens import decode_access_token
 from app.config import get_settings
@@ -73,6 +74,9 @@ async def stream_assistant_message(
             except AssistantFormatError:
                 await websocket.send_json({"type": "error", "message": "The assistant returned an unreadable answer. Retry the question."})
                 continue
+            except EmbeddingError as error:
+                await websocket.send_json({"type": "error", "message": str(error)})
+                continue
             await websocket.send_json({"type": "answer", "data": _to_read(record).model_dump()})
             await websocket.send_json({"type": "complete", "session_id": record.session_id})
     except WebSocketDisconnect:
@@ -115,6 +119,8 @@ def create_assistant_message(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The assistant returned an unreadable answer. Retry the question.",
         ) from error
+    except EmbeddingError as error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
 
     return _to_read(record)
 

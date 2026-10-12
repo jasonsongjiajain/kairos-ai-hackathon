@@ -84,9 +84,10 @@ def test_seed_is_disabled_by_default(db_session, monkeypatch):
     assert _count(db_session, User) == 0
 
 
-def test_embedding_dimensions_are_fixed_to_initial_schema_size():
+def test_embedding_dimensions_match_supported_storage_columns():
     assert Settings(database_url="sqlite://", jwt_secret="test").embedding_dimensions == 1536
-    with pytest.raises(ValidationError, match="changing it requires a new migration"):
+    assert Settings(database_url="sqlite://", jwt_secret="test", embedding_dimensions=1024).embedding_dimensions == 1024
+    with pytest.raises(ValidationError, match="other sizes require a new migration"):
         Settings(database_url="sqlite://", jwt_secret="test", embedding_dimensions=3072)
 
 

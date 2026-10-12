@@ -12,16 +12,17 @@ from app.integrations.embeddings import LocalDeterministicEmbeddingProvider
 
 class RecordingEmbeddingProvider:
     dimension = 1536
+    profile = "test:recording:1536"
 
     def __init__(self) -> None:
         self.document_calls: list[list[str]] = []
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         self.document_calls.append(list(texts))
-        return [[0.0] * self.dimension for _ in texts]
+        return [[1.0] + [0.0] * (self.dimension - 1) for _ in texts]
 
     def embed_query(self, text: str) -> list[float]:
-        return [0.0] * self.dimension
+        return [1.0] + [0.0] * (self.dimension - 1)
 
 
 @pytest.fixture

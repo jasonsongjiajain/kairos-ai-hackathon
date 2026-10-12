@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.ai import retrieval
+from app.ai.embedding_space import EmbeddingError
 from app.ai.ports import EmbeddingProvider
 from app.auth.dependencies import AuthenticatedUser, get_current_user
 from app.config import get_settings
@@ -42,6 +43,8 @@ def search_knowledge(
             matches = retrieval.retrieve(session, q, embedder)
     except TicketNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found") from error
+    except EmbeddingError as error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
 
     return [
         KnowledgeCitationRead(

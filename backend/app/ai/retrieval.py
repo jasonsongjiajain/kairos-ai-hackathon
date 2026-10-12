@@ -12,6 +12,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.ai.ports import ChunkMatch, EmbeddingProvider, VectorSearch
+from app.ai.embedding_space import EmbeddingError, EmbeddingSpace, space_for, validate_vector
 from app.auth.dependencies import AuthenticatedUser
 from app.domain.models import KnowledgeChunk, KnowledgeDocument
 from app.services import ticket_queries
@@ -38,12 +39,14 @@ def retrieve(
     service_category: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> list[ChunkMatch]:
-    query_vector = embedder.embed_query(query)
+    space = space_for(embedder)
+    query_vector = validate_vector(embedder.embed_query(query), space.dimension)
     return resolve_vector_search(session).search(
         session,
         query_vector,
         service_category=service_category,
         limit=limit,
+        embedding_space=space,
     )
 
 
@@ -83,12 +86,15 @@ class PgVectorSearch:
         *,
         service_category: str | None,
         limit: int,
+        embedding_space: EmbeddingSpace,
     ) -> list[ChunkMatch]:
-        distance = KnowledgeChunk.embedding.cosine_distance(list(query_vector))
+        vector_column = getattr(KnowledgeChunk, embedding_space.vector_attribute)
+        profile_column = getattr(KnowledgeChunk, embedding_space.profile_attribute)
+        distance = vector_column.cosine_distance(list(query_vector))
         statement: Select = (
             select(KnowledgeChunk, KnowledgeDocument, distance.label("distance"))
             .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
-            .where(KnowledgeChunk.embedding.is_not(None))
+            .where(vector_column.is_not(None), profile_column == embedding_space.profile)
             .order_by(distance)
             .limit(limit)
         )
@@ -107,14 +113,18 @@ class InMemoryVectorSearch:
         *,
         service_category: str | None,
         limit: int,
+        embedding_space: EmbeddingSpace,
     ) -> list[ChunkMatch]:
         rows = session.execute(
             select(KnowledgeChunk, KnowledgeDocument)
             .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
-            .where(KnowledgeChunk.embedding.is_not(None))
+            .where(
+                getattr(KnowledgeChunk, embedding_space.vector_attribute).is_not(None),
+                getattr(KnowledgeChunk, embedding_space.profile_attribute) == embedding_space.profile,
+            )
         ).all()
         matches = [
-            _match(chunk, document, cosine_similarity(query_vector, chunk.embedding))
+            _match(chunk, document, cosine_similarity(query_vector, getattr(chunk, embedding_space.vector_attribute)))
             for chunk, document in rows
             if document_applies_to_service(document.source_type, service_category)
         ]
@@ -125,6 +135,8 @@ class InMemoryVectorSearch:
 def cosine_similarity(left: Sequence[float], right: Sequence[float] | None) -> float:
     if right is None:
         return 0.0
+    if len(left) != len(right):
+        raise EmbeddingError("Cannot compare embeddings with different dimensions")
     dot = 0.0
     left_norm = 0.0
     right_norm = 0.0

@@ -11,6 +11,7 @@ import httpx
 
 from app.ai.ports import ChatCompletionProvider, ChatMessage
 from app.config import Settings
+from app.integrations.model_http import create_model_client
 
 
 class LocalDeterministicChatProvider:
@@ -45,16 +46,22 @@ class HostedChatCompletionProvider:
         api_key: str,
         model: str,
         client: httpx.Client | None = None,
+        tls_verify: bool = True,
+        timeout_seconds: float = 60.0,
+        max_output_tokens: int | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.tls_verify = tls_verify
         self._client = client
+        self.timeout_seconds = timeout_seconds
+        self.max_output_tokens = max_output_tokens
 
     def complete(self, messages: Sequence[ChatMessage], *, temperature: float = 0.0) -> str:
         if not self.api_key or self.api_key.startswith("LOCAL_ONLY"):
             raise RuntimeError("MODEL_PROVIDER=hosted requires a configured MODEL_API_KEY")
-        client = self._client or httpx.Client(timeout=60.0)
+        client = self._client or create_model_client(timeout=self.timeout_seconds, tls_verify=self.tls_verify)
         try:
             response = client.post(
                 f"{self.base_url}/chat/completions",
@@ -63,16 +70,20 @@ class HostedChatCompletionProvider:
                     "model": self.model,
                     "temperature": temperature,
                     "messages": [{"role": message.role, "content": message.content} for message in messages],
+                    **({"max_tokens": self.max_output_tokens} if self.max_output_tokens else {}),
                 },
             )
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            content = response.json()["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                raise RuntimeError("The model gateway returned no text response")
+            return content
         finally:
             if self._client is None:
                 client.close()
 
 
-def build_chat_provider(settings: Settings) -> ChatCompletionProvider:
+def build_chat_provider(settings: Settings, *, timeout_seconds: float = 60.0, max_output_tokens: int | None = None) -> ChatCompletionProvider:
     provider = settings.model_provider.strip().lower()
     if provider in ("", "local", "deterministic"):
         return LocalDeterministicChatProvider()
@@ -81,6 +92,9 @@ def build_chat_provider(settings: Settings) -> ChatCompletionProvider:
             base_url=settings.model_base_url,
             api_key=settings.model_api_key,
             model=settings.model_name,
+            tls_verify=settings.model_tls_verify,
+            timeout_seconds=timeout_seconds,
+            max_output_tokens=max_output_tokens,
         )
     raise ValueError(f"Unknown MODEL_PROVIDER: {settings.model_provider}")
 

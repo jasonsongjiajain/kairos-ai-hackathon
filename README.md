@@ -7,6 +7,10 @@ permission-checked device actions.
 **Status:** 24-hour hackathon MVP. All customer, device, and credential data is synthetic demo data.
 No live TMF/NTT/OSS or real device integration is included.
 
+The customer portal also supports a bounded model-directed agent and confirmed
+router reboot/VLAN restoration simulations. See [Customer agent showcase](docs/customer-agent-showcase.md)
+for the walkthrough, file changes, new tables, and safety boundaries.
+
 ## What it does
 
 1. An operator processes a seeded network event. The backend creates and assigns exactly one ticket
@@ -53,6 +57,23 @@ for clients that do not support WebSockets. The current chat provider returns co
 answers, so this stream reports retrieval progress and the final answer rather than token deltas.
 
 ## Architecture
+
+Customer-scoped, read-only diagnostics are available at `GET /portal/me/diagnostics`.
+See [customer diagnostic setup and file explanations](docs/customer-diagnostics.md)
+for customer demo-login provisioning, measurement freshness and model settings.
+
+For hosted Qwen embeddings, see [the 1024-dimensional migration guide](docs/qwen-embedding-migration.md).
+
+Customer complaint triage is available at `POST /portal/me/chat/messages`, with
+saved history and a customer-only `/portal` frontend. See [customer chatbot setup,
+diagnostic rules and file explanations](docs/customer-chat.md). It asks follow-up
+questions, offers self-help, and can record/route local customer trouble tickets.
+It does not operate equipment or dispatch real Unifi teams. The desktop customer
+portal and separate read-only checker are documented in [Customer portal](docs/customer-portal.md).
+Evidence-based mesh/plan suggestions and conflict-safe appointments are documented
+in [Customer support workflows](docs/customer-support-workflows.md).
+The migration preserves original vectors; activate hosted retrieval only after
+gateway probing, re-indexing and verification succeed.
 
 - **Frontend:** React + TypeScript + Vite, Tailwind, Radix primitives, TanStack Query-ready API layer.
 - **Backend:** FastAPI + Pydantic + SQLAlchemy 2 + Alembic.
@@ -115,6 +136,10 @@ enabled in a shared or production environment.
 
 ## Demo walkthrough
 
+For a larger fictional dataset with 20 customers, Wi-Fi configuration, measurement
+history and assigned tickets, see [Dummy data and PostgreSQL](docs/dummy-data-and-postgres.md).
+That guide also covers DBeaver connections and how pgvector shares the existing database.
+
 1. Sign in as the operator and open **Event intake**. Process the seeded ONU-offline event.
 2. Confirm the created ticket and its assignment.
 3. Sign out and sign in as the technician. Open **My work** and the assigned ticket.
@@ -143,7 +168,9 @@ npm run build
 The app connects using `DATABASE_URL`. DBeaver is a database client, not a provider, and phpMyAdmin
 targets MySQL/MariaDB, so neither makes a non-PostgreSQL database compatible with this schema. The
 MVP targets PostgreSQL because relational records and `pgvector` embeddings live in one database.
-The embedding vector size is fixed at 1536; changing it requires a new migration.
+Knowledge storage supports separate 1536-dimensional local and 1024-dimensional
+hosted vector columns. Other sizes require a migration; changing models requires
+re-indexing and matching model provenance.
 
 ## Security notes
 

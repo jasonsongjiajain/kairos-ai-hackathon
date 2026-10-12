@@ -14,12 +14,17 @@ function OperationsPage() {
   return <h1>Operations queue area</h1>
 }
 
+function CustomerPage() { return <h1>Customer support area</h1> }
+
 function AuthTestRoutes({ initialPath = '/sign-in' }: { initialPath?: string }) {
   return (
     <AuthProvider>
       <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
           <Route path="/sign-in" element={<SignInRoute />} />
+          <Route element={<ProtectedRoute allowedRoles={['customer']} />}>
+            <Route path="/portal" element={<CustomerPage />} />
+          </Route>
           <Route element={<ProtectedRoute allowedRoles={['technician']} />}>
             <Route path="/work" element={<WorkPage />} />
           </Route>
@@ -46,6 +51,9 @@ function SignedInRouteFixture({ role, path }: { role: string; path: string }) {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/sign-in" element={<SignInRoute />} />
+          <Route element={<ProtectedRoute allowedRoles={['customer']} />}>
+            <Route path="/portal" element={<CustomerPage />} />
+          </Route>
           <Route element={<ProtectedRoute allowedRoles={['technician']} />}>
             <Route path="/work" element={<WorkPage />} />
           </Route>
@@ -59,6 +67,11 @@ function SignedInRouteFixture({ role, path }: { role: string; path: string }) {
 }
 
 describe('authentication routes', () => {
+  it('redirects customers away from staff operations to customer support', async () => {
+    render(<SignedInRouteFixture role="customer" path="/operations" />)
+    expect(await screen.findByRole('heading', { name: 'Customer support area' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Operations queue area' })).not.toBeInTheDocument()
+  })
   beforeEach(() => {
     window.sessionStorage.clear()
     vi.stubGlobal('fetch', vi.fn())

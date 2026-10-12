@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthenticatedUser, get_current_user
 from app.ai.ports import ChatCompletionProvider, EmbeddingProvider
+from app.ai.embedding_space import EmbeddingError
 from app.api.assistant import get_chat_provider, get_embedding_provider
 from app.services.agent_tools import AgentToolProposalError, propose_agent_tool
 from app.db.session import get_session
@@ -45,6 +46,8 @@ def agent_propose_tool(
         )
     except AgentToolProposalError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    except EmbeddingError as error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
     except ToolNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket or tool not found") from error
     except ToolForbiddenError as error:
