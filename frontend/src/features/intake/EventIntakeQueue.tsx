@@ -96,7 +96,6 @@ export function EventIntakeQueue() {
   if (loadState === 'loading') {
     return (
       <section className="intake" aria-labelledby="intake-heading">
-        <p className="section-label">INCOMING EVENTS</p>
         <h2 id="intake-heading">Event intake</h2>
         <p className="state-panel" role="status">
           Loading pending events.
@@ -108,7 +107,6 @@ export function EventIntakeQueue() {
   if (loadState === 'error') {
     return (
       <section className="intake" aria-labelledby="intake-heading">
-        <p className="section-label">INCOMING EVENTS</p>
         <h2 id="intake-heading">Event intake</h2>
         <div className="state-panel">
           <p className="form-error" role="alert">
@@ -125,7 +123,6 @@ export function EventIntakeQueue() {
   if (events.length === 0) {
     return (
       <section className="intake" aria-labelledby="intake-heading">
-        <p className="section-label">INCOMING EVENTS</p>
         <h2 id="intake-heading">Event intake</h2>
         <div className="state-panel">
           <h3>No pending events</h3>
@@ -143,7 +140,6 @@ export function EventIntakeQueue() {
 
   return (
     <section className="intake" aria-labelledby="intake-heading">
-      <p className="section-label">INCOMING EVENTS</p>
       <h2 id="intake-heading">Event intake</h2>
       <p className="intake-intro">
         {unresolved === 0 ? 'No events are waiting to be processed.'

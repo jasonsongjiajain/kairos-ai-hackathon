@@ -2,11 +2,11 @@ import type { ToolProposal } from '../../lib/api/tools'
 import { Button } from '../../components/ui/button'
 import { motion, useReducedMotion } from 'framer-motion'
 import { arrive } from '../../lib/motion'
+import { OperationStatusLabel } from '../../components/ai/status'
 
 type ActionProposalProps = {
   proposal: ToolProposal
-  onReview?: () => void
-  busy?: boolean
+  recorded?: boolean
   onSelectDevice?: (deviceId: string) => void
 }
 
@@ -14,9 +14,10 @@ function parameterLines(proposal: ToolProposal): string[] {
   const entries: string[] = []
   for (const [key, value] of Object.entries(proposal.parameters)) {
     if (key === 'device_id') continue
+    if (/password|credential|secret|token|passcode/i.test(key)) { entries.push(`${key} = [redacted]`); continue }
     if (key === 'settings' && value && typeof value === 'object') {
       for (const [setting, settingValue] of Object.entries(value as Record<string, unknown>)) {
-        entries.push(`${setting} = ${String(settingValue)}`)
+        entries.push(`${setting} = ${/password|credential|secret|token|passcode/i.test(setting) ? '[redacted]' : String(settingValue)}`)
       }
       continue
     }
@@ -25,15 +26,16 @@ function parameterLines(proposal: ToolProposal): string[] {
   return entries
 }
 
-export function ActionProposal({ proposal, onReview, busy = false, onSelectDevice }: ActionProposalProps) {
+export function ActionProposal({ proposal, recorded = false, onSelectDevice }: ActionProposalProps) {
   const reducedMotion = Boolean(useReducedMotion())
   const lines = parameterLines(proposal)
   return (
-    <motion.article className="proposal-card" aria-label={`${onReview ? 'Proposed action' : 'Recorded proposal'} ${proposal.tool_name}`}
+    <motion.article className="proposal-card" aria-label={`${recorded ? 'Recorded proposal' : 'Proposed action'} ${proposal.tool_name}`}
       variants={arrive} initial="hidden" animate="visible" custom={reducedMotion}>
       <header className="proposal-header">
-        <p className="section-label">{onReview ? 'PROPOSED ACTION' : 'RECORDED PROPOSAL'}</p>
+        <p className="section-label">{recorded ? 'Recorded proposal' : 'Proposed action'}</p>
         <h4>{proposal.summary}</h4>
+        {!recorded && <OperationStatusLabel status="needs-approval" />}
       </header>
       <dl className="proposal-details">
         <div>
@@ -54,7 +56,7 @@ export function ActionProposal({ proposal, onReview, busy = false, onSelectDevic
       {onSelectDevice && <Button variant="quiet" type="button" onClick={() => onSelectDevice(proposal.device_id)}>
         Show {proposal.device_ref} in topology
       </Button>}
-      {onReview && (proposal.requires_confirmation ? (
+      {!recorded && (proposal.requires_confirmation ? (
         <p className="muted-note">
           This action changes the device. Review the target and effect, then approve to execute the
           simulated change.
@@ -62,9 +64,6 @@ export function ActionProposal({ proposal, onReview, busy = false, onSelectDevic
       ) : (
         <p className="muted-note">This is a read-only check and makes no changes.</p>
       ))}
-      {onReview && <Button className="process-button" type="button" onClick={onReview} disabled={busy}>
-        {proposal.requires_confirmation ? 'Review and approve' : 'Run check'}
-      </Button>}
     </motion.article>
   )
 }

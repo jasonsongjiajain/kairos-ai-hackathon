@@ -23,10 +23,20 @@ it('puts the labeled customer topology before the investigation workbench and ex
   const topology = await screen.findByRole('region', { name: 'Customer network topology' })
   expect(topology).toHaveTextContent('1 device · 0 connections')
   const deviceButton = within(topology).getByRole('button', { name: /Access router/ })
-  const workbench = screen.getByRole('region', { name: 'A clearer path to resolution.' })
-  expect(topology.compareDocumentPosition(workbench) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  const launcher = screen.getByRole('button', { name: 'Open AI assistant' })
+  expect(topology.compareDocumentPosition(launcher) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   await userEvent.setup().click(deviceButton)
   expect(deviceButton).toHaveAttribute('aria-pressed', 'true')
+})
+
+it('opens the AI assistant in a closable sidebar from Overview', async () => {
+  render(<MemoryRouter initialEntries={['/tickets/t1']}><Routes><Route path="/tickets/:ticketId" element={<TicketPage />} /></Routes></MemoryRouter>)
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Open AI assistant' }))
+  const drawer = screen.getByRole('dialog', { name: 'AI assistant' })
+  expect(drawer).toBeVisible()
+  await user.click(within(drawer).getByRole('button', { name: 'Close AI assistant' }))
+  expect(document.querySelector('.assistant-drawer')).toHaveAttribute('aria-hidden', 'true')
 })
 
 it.each(['older-first', 'newer-first'])('latest-started action owns trace with %s responses', async (order) => {
@@ -35,28 +45,28 @@ it.each(['older-first', 'newer-first'])('latest-started action owns trace with %
   const older = new Promise<Response>((resolve) => { resolveOlder = resolve })
   const newer = new Promise<Response>((resolve) => { resolveNewer = resolve })
   vi.stubGlobal('fetch', vi.fn(async (url) => {
-    if (String(url).endsWith('/assistant/messages')) return json({ session_id: 's1', answer: 'Check router', uncertainty: '', has_evidence: true, citations: [], next_best_action: null })
-    if (String(url).endsWith('/catalog')) return json([{ name: 'get_device_status', description: 'Check status', kind: 'read_only', requires_confirmation: false }])
+     if (String(url).endsWith('/assistant/messages')) return json({ session_id: 's1', answer: 'Check router', uncertainty: '', has_evidence: true, citations: [{ chunk_id: 'kb-1', document_id: 'doc-1', document_title: 'Router procedure', section: 'Checks', source_type: 'procedure', content: 'Check the router.', score: 0.9 }], next_best_action: null })
+    if (String(url).endsWith('/catalog')) return json([{ name: 'get_device_status', title: 'Check status', description: 'Check status', kind: 'read_only', category: 'diagnostics', risk: 'low', requires_confirmation: false, target_device_types: null }])
+    if (String(url).endsWith('/agent-plan')) return json({ ticket_id: 't1', question: '', device_id: 'd1', summary: 'Start here.', suggestions: [{ tool_name: 'reboot_router', title: 'Reboot home router', description: 'Reboot router', kind: 'stateful', category: 'diagnostics', risk: 'medium', requires_confirmation: true, device_id: 'd1', device_ref: 'R1', device_type: 'router', parameters: {}, rationale: 'Router is offline.', steps: [], evidence: [], confidence: 0.8 }] })
     if (String(url).endsWith('/agent-propose')) return json(proposal)
     if (String(url).endsWith('/confirm')) return newer
     return older
   }))
   const user = userEvent.setup()
   render(<MemoryRouter initialEntries={['/tickets/t1']}><Routes><Route path="/tickets/:ticketId" element={<TicketPage />} /></Routes></MemoryRouter>)
+  await user.click(await screen.findByRole('button', { name: 'Open AI assistant' }))
   await user.click(await screen.findByRole('button', { name: 'What should I check first?' }))
-  await user.click(await screen.findByRole('button', { name: 'Ask agent to select an action' }))
-  await screen.findByRole('button', { name: 'Review and approve' })
-  await user.click(screen.getByRole('button', { name: 'Load available actions' }))
-  await user.click(await screen.findByRole('button', { name: 'Prepare proposal' }))
-  const trace = within(screen.getByRole('list', { name: 'Incident trace' }))
+   await screen.findByRole('button', { name: 'Prepare this action' })
+  await user.click(await screen.findByRole('button', { name: 'Prepare this action' }))
+  await screen.findByRole('button', { name: 'Approve and run' })
+   const trace = within(screen.getByRole('list', { name: 'Incident trace' }))
   const action = trace.getByText('Action').closest('li')!
-  await user.click(screen.getByRole('button', { name: 'Review and approve' }))
   await user.click(screen.getByRole('button', { name: 'Approve and run' }))
   const finishOlder = () => resolveOlder(json({ ...proposal, id: 'old', kind: 'read_only', requires_confirmation: false, status: 'succeeded', summary: 'Older check complete' }))
   const finishNewer = () => resolveNewer(json({ ...proposal, status: 'failed', message: 'Newer execution failed', correlation_id: 'c1', executed_at: proposal.created_at }))
   if (order === 'older-first') {
     await act(async () => finishOlder())
-    expect(action).toHaveTextContent('Executing approved action')
+    expect(action).toHaveTextContent('Awaiting execution result')
     expect(action).not.toHaveTextContent('Complete')
     await act(async () => finishNewer())
   } else {
@@ -86,6 +96,7 @@ it('keeps evidence current when the newest overlapping question completes first'
   }))
   const user = userEvent.setup()
   render(<MemoryRouter initialEntries={['/tickets/t1']}><Routes><Route path="/tickets/:ticketId" element={<TicketPage />} /></Routes></MemoryRouter>)
+  await user.click(await screen.findByRole('button', { name: 'Open AI assistant' }))
   await user.click(await screen.findByRole('button', { name: 'What should I check first?' }))
   const composer = screen.getByRole('textbox', { name: 'Ask about this ticket' })
   await user.type(composer, 'Why is the service down?')

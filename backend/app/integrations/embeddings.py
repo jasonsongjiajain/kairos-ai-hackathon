@@ -12,8 +12,8 @@ from collections.abc import Sequence
 import httpx
 
 from app.ai.ports import EmbeddingProvider
-from app.config import Settings
-from app.integrations.http import verify_setting
+from app.config import Settings, get_settings
+from app.integrations.http import post_json, verify_setting
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
@@ -21,9 +21,9 @@ _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 class LocalDeterministicEmbeddingProvider:
     """Stable hashed bag-of-words vectors; no network and no API key."""
 
-    def __init__(self, dimension: int = 1536) -> None:
-        if dimension != 1536:
-            raise ValueError("The local embedding provider is fixed at 1536 dimensions")
+    def __init__(self, dimension: int = 1024) -> None:
+        if dimension <= 0:
+            raise ValueError("Embedding dimension must be a positive integer")
         self.dimension = dimension
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
@@ -46,7 +46,12 @@ class LocalDeterministicEmbeddingProvider:
 
 
 class HostedEmbeddingProvider:
-    """OpenAI-compatible ``/embeddings`` calls for a configured provider."""
+    """OpenAI-compatible ``/embeddings`` calls for a configured provider.
+
+    The provider follows the model's own vector size: it does not send a
+    ``dimensions`` hint, and it rejects a response whose length differs from the
+    configured ``embedding_dimensions`` so the schema and index stay aligned.
+    """
 
     def __init__(
         self,
@@ -78,17 +83,20 @@ class HostedEmbeddingProvider:
             raise RuntimeError("EMBEDDING_PROVIDER=hosted requires a configured MODEL_API_KEY")
         client = self._client or httpx.Client(timeout=30.0, verify=self.verify)
         try:
-            response = client.post(
+            response = post_json(
+                client,
                 f"{self.base_url}/embeddings",
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                json={"model": self.model, "input": text, "dimensions": self.dimension},
+                payload={"model": self.model, "input": text},
             )
             response.raise_for_status()
             vector = response.json()["data"][0]["embedding"]
             if not isinstance(vector, list) or len(vector) != self.dimension:
                 actual = len(vector) if isinstance(vector, list) else "invalid"
                 raise RuntimeError(
-                    f"Embedding model returned {actual} dimensions; database schema requires {self.dimension}"
+                    f"Embedding model {self.model} returned {actual} dimensions, but "
+                    f"EMBEDDING_DIMENSIONS={self.dimension}. Set EMBEDDING_DIMENSIONS to the model's "
+                    "size, run a new migration, then re-ingest with --reembed."
                 )
             if any(not isinstance(value, (float, int)) for value in vector):
                 raise RuntimeError("Embedding model returned non-numeric vector values")
@@ -119,3 +127,22 @@ def _features(text: str) -> list[str]:
     tokens = _TOKEN_PATTERN.findall(text.lower())
     bigrams = [f"{first} {second}" for first, second in zip(tokens, tokens[1:])]
     return tokens + bigrams
+
+
+def main() -> None:
+    """Print the configured dimension and the provider's actual output size.
+
+    Run ``python -m app.integrations.embeddings`` after configuring a hosted
+    provider to confirm the model's vector size before migrating and re-ingesting.
+    """
+    settings = get_settings()
+    provider = build_embedding_provider(settings)
+    vector = provider.embed_query("embedding dimension probe")
+    model = getattr(provider, "model", "local-deterministic")
+    print(f"Provider: {model}")
+    print(f"Configured EMBEDDING_DIMENSIONS: {settings.embedding_dimensions}")
+    print(f"Returned dimensions: {len(vector)}")
+
+
+if __name__ == "__main__":
+    main()

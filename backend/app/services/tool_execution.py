@@ -40,9 +40,13 @@ class ToolValidationError(Exception):
 @dataclass(frozen=True)
 class ToolCatalogItem:
     name: str
+    title: str
     description: str
     kind: str
+    category: str
+    risk: str
     requires_confirmation: bool
+    target_device_types: tuple[str, ...] | None
 
 
 @dataclass(frozen=True)
@@ -78,9 +82,13 @@ def catalog(actor: AuthenticatedUser) -> list[ToolCatalogItem]:
     return [
         ToolCatalogItem(
             name=spec.name,
+            title=spec.title,
             description=spec.description,
             kind=spec.kind,
+            category=spec.category,
+            risk=spec.risk,
             requires_confirmation=spec.requires_confirmation,
+            target_device_types=spec.target_device_types,
         )
         for spec in tool_registry.catalog_for_role(actor.role)
     ]
@@ -270,9 +278,21 @@ def _authorize_device(
     device = session.get(NetworkDevice, device_id)
     if device is None or device.customer_id != ticket.customer_id:
         raise ToolForbiddenError("device out of scope")
-    if spec.device_type is not None and device.device_type != spec.device_type:
-        raise ToolForbiddenError(f"{spec.name} requires a {spec.device_type}")
+    if spec.target_device_types is not None and not _device_type_allowed(spec, device.device_type):
+        expected = " or ".join(spec.target_device_types)
+        raise ToolForbiddenError(f"{spec.name} requires a {expected} device or managed mesh node")
     return device
+
+
+def _device_type_allowed(spec: tool_registry.ToolSpec, device_type: str) -> bool:
+    """Keep personal endpoints out of the control plane while allowing TM mesh nodes."""
+    if spec.target_device_types is None:
+        return True
+    normalized = device_type.strip().lower()
+    expected = {item.lower() for item in spec.target_device_types}
+    if normalized in expected:
+        return True
+    return "router" in expected and normalized in {"mesh", "root", "satellite"}
 
 
 def _validate_params(spec: tool_registry.ToolSpec, parameters: dict):
@@ -291,18 +311,19 @@ def _first_error(error: ValidationError) -> str:
 
 
 def _run(tool_name: str, device: NetworkDevice, params) -> tool_executor.SimulationResult:
-    if tool_name == "get_device_status":
-        return tool_executor.get_device_status(device)
-    if tool_name == "reboot_router":
-        return tool_executor.reboot_router(device)
-    if tool_name == "update_config":
-        return tool_executor.update_config(device, params.settings)
-    raise ToolNotFoundError(tool_name)
+    try:
+        return tool_executor.run(tool_name, device, params)
+    except KeyError as error:
+        raise ToolNotFoundError(tool_name) from error
 
 
 def _validate_preconditions(tool_name: str, device: NetworkDevice) -> None:
     if tool_name == "reboot_router" and device.status == "online":
         raise ToolValidationError("The router is already online; refresh device status before proposing another reboot")
+    if tool_name in {"reboot_ont", "refresh_ont_registration"} and device.status == "online":
+        raise ToolValidationError(
+            "The ONU is already online; refresh device status before proposing another registration action"
+        )
 
 
 def _audit(session: Session, *, actor_id: str, ticket_id: str, event_type: str, details: dict) -> None:
@@ -355,10 +376,19 @@ def _execution_record(row: ToolExecution, device: NetworkDevice) -> ToolExecutio
 
 
 def _summary(spec: tool_registry.ToolSpec, parameters: dict, device: NetworkDevice) -> str:
-    if spec.name == "update_config":
-        settings = parameters.get("settings", {})
-        applied = ", ".join(f"{key}={value}" for key, value in sorted(settings.items()))
-        return f"{spec.description} ({applied}) on {device.device_ref}"
-    if spec.name == "reboot_router":
-        return f"{spec.description} on {device.device_ref}"
-    return f"{spec.description} for {device.device_ref}"
+    extras = {
+        key: value
+        for key, value in parameters.items()
+        if key != "device_id" and value not in (None, {}, [])
+    }
+    detail = ""
+    if extras:
+        rendered = ", ".join(f"{key}={_render_value(value)}" for key, value in sorted(extras.items()))
+        detail = f" ({rendered})"
+    return f"{spec.title}: {spec.description}{detail} on {device.device_ref}"
+
+
+def _render_value(value: object) -> str:
+    if isinstance(value, dict):
+        return ", ".join(f"{key}={value[key]}" for key in sorted(value))
+    return str(value)

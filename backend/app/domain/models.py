@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import Settings
@@ -28,6 +29,7 @@ class User(Base):
     role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    staff_code: Mapped[str | None] = mapped_column(String(20), unique=True)
 
 
 class Customer(Base):
@@ -37,6 +39,12 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     address: Mapped[str] = mapped_column(String(255), nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    account_no: Mapped[str | None] = mapped_column(Text)
+    contact_no: Mapped[str | None] = mapped_column(Text)
+    email_address: Mapped[str | None] = mapped_column(Text)
+    contract_term: Mapped[int | None] = mapped_column(Integer)
+    commitment_start: Mapped[datetime | None] = mapped_column(DateTime)
+    commitment_end: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Service(Base):
@@ -59,6 +67,52 @@ class NetworkDevice(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="unknown", server_default=text("'unknown'"), nullable=False)
     details: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"), nullable=False)
+    mac_address: Mapped[str | None] = mapped_column(Text)
+    login_id: Mapped[str | None] = mapped_column(Text)
+    friendly_name: Mapped[str | None] = mapped_column(Text)
+    manufacturer: Mapped[str | None] = mapped_column(Text)
+    brand: Mapped[str | None] = mapped_column(Text)
+    cloud_device_type: Mapped[str | None] = mapped_column(Text)
+    link_type: Mapped[str | None] = mapped_column(Text)
+    ip_address: Mapped[str | None] = mapped_column(INET)
+    ssid_2_4ghz: Mapped[str | None] = mapped_column(Text)
+    ssid_5ghz: Mapped[str | None] = mapped_column(Text)
+    channel_2_4ghz: Mapped[int | None] = mapped_column(Integer)
+    channel_5ghz: Mapped[int | None] = mapped_column(Integer)
+    antenna_2_4ghz: Mapped[str | None] = mapped_column(Text)
+    antenna_5ghz: Mapped[str | None] = mapped_column(Text)
+    protocol_2_4ghz: Mapped[str | None] = mapped_column(Text)
+    protocol_5ghz: Mapped[str | None] = mapped_column(Text)
+    rssi: Mapped[int | None] = mapped_column(Integer)
+    rx_rate: Mapped[int | None] = mapped_column(Integer)
+    tx_rate: Mapped[int | None] = mapped_column(Integer)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime)
+    parent_mac: Mapped[str | None] = mapped_column(Text)
+    platform: Mapped[str | None] = mapped_column(Text)
+    bandwidth_2_4ghz: Mapped[str | None] = mapped_column(Text)
+    bandwidth_5ghz: Mapped[str | None] = mapped_column(Text)
+
+
+class Router(Base):
+    __tablename__ = "routers"
+    serial_number: Mapped[str] = mapped_column(Text, primary_key=True)
+    login_id: Mapped[str] = mapped_column(Text, nullable=False)
+    manufacturer: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    cpu_usage_pct: Mapped[int | None] = mapped_column(Integer)
+    cpu_temperature_c: Mapped[int | None] = mapped_column(Integer)
+    memory_usage_pct: Mapped[int | None] = mapped_column(Integer)
+    monthly_usage_gb: Mapped[float | None] = mapped_column(Numeric(9, 1))
+    rx_power_dbm: Mapped[float | None] = mapped_column(Numeric(5, 1))
+
+
+class CustomerSummary(Base):
+    __tablename__ = "customer_summaries"
+    login_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    recommendation: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 
 class TopologyEdge(Base):
@@ -92,6 +146,50 @@ class Ticket(Base):
     severity: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="open", server_default=text("'open'"), nullable=False)
     summary: Mapped[str] = mapped_column(String(255), nullable=False)
+    # TMFORCE field-operations metadata. Nullable so non-TMFORCE tickets remain valid.
+    tm_ticket_no: Mapped[str | None] = mapped_column(String(60), unique=True)
+    ctt_activity_id: Mapped[str | None] = mapped_column(String(60))
+    login_id: Mapped[str | None] = mapped_column(String(60))
+    ticket_category: Mapped[str | None] = mapped_column(String(60))
+    ticket_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    staff_code: Mapped[str | None] = mapped_column(String(20))
+
+
+class EntityFactSheet(Base):
+    """Retrievable per-entity fact group, mirroring the knowledge chunk index.
+
+    One row per ``(entity_type, entity_id, group_key)``. ``content`` is the
+    rendered, secret-free field block that is embedded for retrieval; sensitive
+    fields live only in ``EntityFact`` and never enter ``content``.
+    """
+
+    __tablename__ = "entity_fact_sheets"
+    __table_args__ = (UniqueConstraint("entity_type", "entity_id", "group_key", name="uq_fact_sheet_entity_group"),)
+    id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    group_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(Settings().embedding_dimensions))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class EntityFact(Base):
+    """Typed field value for an entity, used for exact display and lookup."""
+
+    __tablename__ = "entity_facts"
+    __table_args__ = (UniqueConstraint("entity_type", "entity_id", "field_key", name="uq_fact_entity_field"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    group_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    field_key: Mapped[str] = mapped_column(String(60), nullable=False)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    value_text: Mapped[str | None] = mapped_column(Text)
+    value_number: Mapped[float | None] = mapped_column(Float)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class KnowledgeDocument(Base):

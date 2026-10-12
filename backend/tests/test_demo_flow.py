@@ -25,9 +25,11 @@ def test_demo_api_flow_creates_ticket_answers_with_evidence_and_executes_approve
     app.dependency_overrides[get_session] = lambda: db_session
     app.dependency_overrides.pop(get_current_user, None)
     from app.api.assistant import get_chat_provider, get_embedding_provider
+    from app.api.tools import get_reasoning_provider
 
     app.dependency_overrides[get_embedding_provider] = lambda: embedder
     app.dependency_overrides[get_chat_provider] = lambda: LocalDeterministicChatProvider()
+    app.dependency_overrides[get_reasoning_provider] = lambda: LocalDeterministicChatProvider()
     client = TestClient(app)
     try:
         operator_login = client.post(
@@ -72,8 +74,43 @@ def test_demo_api_flow_creates_ticket_answers_with_evidence_and_executes_approve
         assert answer.json()["citations"]
 
         router = db_session.scalar(
-            select(NetworkDevice).where(NetworkDevice.device_ref == "DEMO-RTR-001")
+            select(NetworkDevice).where(NetworkDevice.device_ref == "MY-RTR-001")
         )
+        onu = db_session.scalar(
+            select(NetworkDevice).where(NetworkDevice.device_ref == "MY-ONT-001")
+        )
+        catalog = client.get(f"/tickets/{ticket_id}/tools/catalog", headers=headers)
+        assert catalog.status_code == 200
+        catalog_by_name = {item["name"]: item for item in catalog.json()}
+        assert catalog_by_name["update_config"]["risk"] == "medium"
+        assert catalog_by_name["set_wifi_ssid"]["target_device_types"] == ["router"]
+
+        plan = client.post(
+            f"/tickets/{ticket_id}/tools/agent-plan",
+            headers=headers,
+            json={
+                "question": "What should I inspect for this offline ONU with LOS?",
+                "device_id": onu.id,
+            },
+        )
+        assert plan.status_code == 200
+        plan_names = [item["tool_name"] for item in plan.json()["suggestions"]]
+        assert plan_names
+        assert plan.json()["suggestions"][0]["risk"] in {"low", "medium", "high"}
+
+        channel_plan = client.post(
+            f"/tickets/{ticket_id}/tools/agent-plan",
+            headers=headers,
+            json={"question": "configure the router to change the channel to 44"},
+        )
+        assert channel_plan.status_code == 200
+        body = channel_plan.json()
+        assert body["device_id"] == router.id
+        top = body["suggestions"][0]
+        assert top["tool_name"] == "set_wifi_channel"
+        assert top["parameters"] == {"band": "5", "channel": 44}
+        assert top["steps"]
+
         proposal = client.post(
             f"/tickets/{ticket_id}/tools/agent-propose",
             headers=headers,

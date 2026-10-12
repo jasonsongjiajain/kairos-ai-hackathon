@@ -15,6 +15,7 @@ describe('ToolActivity', () => {
     expect(screen.getAllByRole('status')).toHaveLength(1)
     expect(status).toHaveAttribute('aria-live', 'polite')
     expect(status).toHaveTextContent('Pending')
+    expect(status.querySelector('.tool-activity__track')).toBeInTheDocument()
     expect(status).toHaveTextContent('Retrieving evidence')
     expect(status).toHaveTextContent('Searching ticket evidence and service guidance...')
     expect(status).toHaveStyle({ opacity: '1' })
@@ -24,6 +25,7 @@ describe('ToolActivity', () => {
       expect(status.querySelector('.tool-activity__state')).toBe(liveText)
       expect(status).toHaveTextContent(text)
       expect(status).not.toHaveTextContent('Pending')
+      expect(status.querySelector('.tool-activity__track')).not.toBeInTheDocument()
       expect(status).toHaveStyle({ opacity: '1' })
     }
   })

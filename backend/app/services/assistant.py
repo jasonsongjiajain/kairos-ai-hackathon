@@ -23,6 +23,7 @@ from app.auth.dependencies import AuthenticatedUser
 from app.config import get_settings
 from app.domain.models import AssistantMessage, AssistantSession
 from app.domain.schemas import CREDENTIAL_KEYS
+from app.services import ticket_queries
 
 NO_EVIDENCE_ANSWER = (
     "No service guidance matched this question, so there is no cited procedure to rely on. "
@@ -194,6 +195,8 @@ def answer_ticket_question(
     limit: int = retrieval.DEFAULT_LIMIT,
 ) -> AssistantAnswerRecord:
     context = assemble_context(session, ticket_id, actor)
+    if _asks_for_credentials(question):
+        return _answer_credential_request(session, ticket_id, actor, question, context)
     matches = retrieval.retrieve_for_ticket(
         session,
         ticket_id,
@@ -225,6 +228,58 @@ def answer_ticket_question(
         has_evidence=bool(answer.citations),
         citations=answer.citations,
         next_best_action=answer.next_best_action,
+    )
+
+
+def _asks_for_credentials(question: str) -> bool:
+    lowered = question.lower()
+    direct_request = any(
+        phrase in lowered
+        for phrase in (
+            "do you have",
+            "do u have",
+            "show me",
+            "give me",
+            "what is the",
+            "what are the",
+            "reveal",
+            "retrieve",
+        )
+    )
+    credential_term = any(term in lowered for term in ("credential", "password", "passcode", "login", "secret"))
+    ownership_statement = any(phrase in lowered for phrase in ("i have", "i do not have", "i don't have", "dont have", "does not have", "doesn't have"))
+    return credential_term and (direct_request or ownership_statement)
+
+
+def _answer_credential_request(
+    session: Session,
+    ticket_id: str,
+    actor: AuthenticatedUser,
+    question: str,
+    context: BoundedContext,
+) -> AssistantAnswerRecord:
+    """Answer credential availability without putting the secret in model context or history."""
+    detail = ticket_queries.get_ticket_detail(session, ticket_id, actor)
+    lowered = question.lower()
+    requested_types = [service_type for service_type in ("iptv", "vobb", "hsi", "internet") if service_type in lowered]
+    services = [service for service in detail.services if requested_types and any(service_type in service.service_type.lower() for service_type in requested_types)]
+    if not services:
+        services = [service for service in detail.services if "credential" in lowered or "password" in lowered]
+    available = any(bool(service.details and any("password" in key.lower() or "credential" in key.lower() for key in service.details)) for service in services)
+    if available:
+        answer_text = "Yes. A credential is available for the matching customer service. Use the audited reveal control below to view it; the secret will not be saved in this conversation."
+    else:
+        answer_text = "No credential is available for the matching customer service in this ticket."
+    assistant_session = _session_for(session, ticket_id, actor.id)
+    answer = AssistantAnswer(answer=answer_text, uncertainty="", citations=[], next_best_action=None)
+    _persist(session, assistant_session, question, answer)
+    return AssistantAnswerRecord(
+        session_id=assistant_session.id,
+        answer=answer_text,
+        uncertainty="",
+        has_evidence=False,
+        citations=[],
+        next_best_action=None,
     )
 
 

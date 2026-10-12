@@ -4,9 +4,9 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.domain.models import (
-    AssistantMessage, AssistantSession, AuditEvent, Customer, KnowledgeChunk,
-    KnowledgeDocument, NetworkDevice, NetworkEvent, Role, Service, Ticket,
-    ToolExecution, TopologyEdge, User,
+    AssistantMessage, AssistantSession, AuditEvent, Customer, EntityFact,
+    EntityFactSheet, KnowledgeChunk, KnowledgeDocument, NetworkDevice,
+    NetworkEvent, Role, Service, Ticket, ToolExecution, TopologyEdge, User,
 )
 from app.config import Settings
 from app.seed.demo_data import DEMO_ACCOUNTS, DEMO_EVENT_SOURCE_IDS, seed_demo_data
@@ -22,14 +22,16 @@ def test_seed_is_idempotent_and_contains_expected_demo_records(db_session, enabl
     assert counts_after_first_run == {
         "users": 2,
         "customers": 2,
-        "services": 6,
-        "network_devices": 6,
-        "topology_edges": 4,
-        "network_events": 3,
-        "pending_events": 3,
+        "services": 8,
+        "network_devices": 24,
+        "topology_edges": 22,
+        "network_events": 10,
+        "pending_events": 10,
         "tickets": 0,
-        "knowledge_documents": 5,
-        "knowledge_chunks": 15,
+        "knowledge_documents": 7,
+        "knowledge_chunks": 35,
+        "entity_facts": 166,
+        "entity_fact_sheets": 26,
         "assistant_sessions": 0,
         "assistant_messages": 0,
         "tool_executions": 0,
@@ -49,7 +51,7 @@ def test_seed_is_idempotent_and_contains_expected_demo_records(db_session, enabl
 
 def test_unrelated_pending_event_does_not_fail_seed_verification(db_session, enable_demo_seed):
     seed_demo_data(db_session)
-    device = db_session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == "DEMO-ONT-001"))
+    device = db_session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == "MY-ONT-001"))
     db_session.add(NetworkEvent(
         source_event_id="UNRELATED-PENDING-EVENT-001",
         event_type="UNRELATED_TEST_EVENT",
@@ -58,19 +60,19 @@ def test_unrelated_pending_event_does_not_fail_seed_verification(db_session, ena
     ))
     db_session.commit()
 
-    assert seed_demo_data(db_session) == {"pending_events": 3, "demo_accounts": 2}
-    assert _count(db_session, NetworkEvent) == 4
-    assert _count(db_session, NetworkEvent, NetworkEvent.processed_at.is_(None)) == 4
-    assert _count(db_session, NetworkEvent, _seeded_pending_event_filter()) == 3
+    assert seed_demo_data(db_session) == {"pending_events": 10, "demo_accounts": 2}
+    assert _count(db_session, NetworkEvent) == 11
+    assert _count(db_session, NetworkEvent, NetworkEvent.processed_at.is_(None)) == 11
+    assert _count(db_session, NetworkEvent, _seeded_pending_event_filter()) == 10
 
 
 def test_seed_fails_clearly_on_divergent_demo_row(db_session, enable_demo_seed):
     seed_demo_data(db_session)
-    device = db_session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == "DEMO-ONT-001"))
+    device = db_session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == "MY-ONT-001"))
     device.status = "online"
     db_session.commit()
 
-    with pytest.raises(RuntimeError, match="Seed conflict.*DEMO-ONT-001.*status"):
+    with pytest.raises(RuntimeError, match="Seed conflict.*MY-ONT-001.*status"):
         seed_demo_data(db_session)
 
     db_session.refresh(device)
@@ -84,10 +86,13 @@ def test_seed_is_disabled_by_default(db_session, monkeypatch):
     assert _count(db_session, User) == 0
 
 
-def test_embedding_dimensions_are_fixed_to_initial_schema_size():
-    assert Settings(database_url="sqlite://", jwt_secret="test").embedding_dimensions == 1536
-    with pytest.raises(ValidationError, match="changing it requires a new migration"):
-        Settings(database_url="sqlite://", jwt_secret="test", embedding_dimensions=3072)
+def test_embedding_dimensions_follow_configured_model_size():
+    assert Settings(database_url="sqlite://", jwt_secret="test").embedding_dimensions == 1024
+    assert Settings(
+        database_url="sqlite://", jwt_secret="test", embedding_dimensions=4096
+    ).embedding_dimensions == 4096
+    with pytest.raises(ValidationError, match="positive integer"):
+        Settings(database_url="sqlite://", jwt_secret="test", embedding_dimensions=0)
 
 
 def test_seed_rolls_back_partial_writes_after_verification_failure(db_session, enable_demo_seed):
@@ -130,6 +135,8 @@ def _seed_counts(session):
         "tickets": _count(session, Ticket),
         "knowledge_documents": _count(session, KnowledgeDocument),
         "knowledge_chunks": _count(session, KnowledgeChunk),
+        "entity_facts": _count(session, EntityFact),
+        "entity_fact_sheets": _count(session, EntityFactSheet),
         "assistant_sessions": _count(session, AssistantSession),
         "assistant_messages": _count(session, AssistantMessage),
         "tool_executions": _count(session, ToolExecution),

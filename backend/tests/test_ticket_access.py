@@ -69,21 +69,21 @@ def workspace(db_session: Session) -> dict[str, object]:
         service_type="Granite",
         service_ref="SVC-GR-1",
         status="active",
-        details={"demo": True},
+        details={},
     )
     hsi = Service(
         customer_id=customer_one.id,
         service_type="HSI",
         service_ref="SVC-HSI-1",
         status="active",
-        details={"demo": True},
+        details={},
     )
     vobb = Service(
         customer_id=customer_one.id,
         service_type="VoBB",
         service_ref="SVC-VOBB-1",
         status="active",
-        details={"demo": True},
+        details={},
     )
     other_service = Service(
         customer_id=customer_two.id,

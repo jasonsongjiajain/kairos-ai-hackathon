@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.ports import ChunkMatch, EmbeddingProvider, VectorSearch
 from app.auth.dependencies import AuthenticatedUser
-from app.domain.models import KnowledgeChunk, KnowledgeDocument
+from app.domain.models import EntityFactSheet, KnowledgeChunk, KnowledgeDocument
 from app.services import ticket_queries
 
 SCOPED_SOURCE_TYPES = frozenset({"granite", "hsi", "vobb"})
@@ -64,7 +64,7 @@ def retrieve_for_ticket(
 ) -> list[ChunkMatch]:
     """Retrieve with the service-category filter derived from an authorized ticket."""
     detail = ticket_queries.get_ticket_detail(session, ticket_id, actor)
-    return retrieve(
+    knowledge = retrieve(
         session,
         query,
         embedder,
@@ -72,6 +72,110 @@ def retrieve_for_ticket(
         limit=limit,
         minimum_score=minimum_score,
     )
+    entities = retrieve_entities(
+        session, query, embedder, _ticket_entity_ids(detail), limit=limit
+    )
+    combined = _merge_by_score(knowledge, entities)
+    return [match for match in combined if match.score >= minimum_score][:limit]
+
+
+def retrieve_entities(
+    session: Session,
+    query: str,
+    embedder: EmbeddingProvider,
+    entity_ids: Sequence[str],
+    *,
+    limit: int = DEFAULT_LIMIT,
+) -> list[ChunkMatch]:
+    if not entity_ids:
+        return []
+    query_vector = embedder.embed_query(query)
+    vector_matches = _entity_vector_matches(session, query_vector, list(entity_ids))
+    lexical_matches = _entity_lexical_matches(session, query, list(entity_ids))
+    return _combine_scores(vector_matches, lexical_matches)[:limit]
+
+
+def _ticket_entity_ids(detail: ticket_queries.TicketDetailRecord) -> list[str]:
+    ids = [detail.ticket.id]
+    ids.extend(service.id for service in detail.services)
+    ids.extend(device.id for device in detail.devices)
+    return ids
+
+
+def _entity_vector_matches(
+    session: Session, query_vector: Sequence[float], entity_ids: list[str]
+) -> list[ChunkMatch]:
+    if session.get_bind().dialect.name == "postgresql":
+        distance = EntityFactSheet.embedding.cosine_distance(list(query_vector))
+        rows = session.execute(
+            select(EntityFactSheet, distance)
+            .where(
+                EntityFactSheet.embedding.is_not(None),
+                EntityFactSheet.entity_id.in_(entity_ids),
+            )
+            .order_by(distance)
+            .limit(DEFAULT_CANDIDATE_LIMIT)
+        ).all()
+        return [
+            _entity_match(sheet, 1.0 - float(distance_value))
+            for sheet, distance_value in rows
+        ]
+    sheets = session.scalars(
+        select(EntityFactSheet).where(
+            EntityFactSheet.embedding.is_not(None),
+            EntityFactSheet.entity_id.in_(entity_ids),
+        )
+    ).all()
+    matches = [
+        _entity_match(sheet, cosine_similarity(query_vector, sheet.embedding))
+        for sheet in sheets
+    ]
+    matches.sort(key=lambda match: match.score, reverse=True)
+    return matches[:DEFAULT_CANDIDATE_LIMIT]
+
+
+def _entity_lexical_matches(
+    session: Session, query: str, entity_ids: list[str]
+) -> dict[str, tuple[ChunkMatch, float]]:
+    terms = _query_terms(query)
+    if not terms:
+        return {}
+    sheets = session.scalars(
+        select(EntityFactSheet).where(EntityFactSheet.entity_id.in_(entity_ids))
+    ).all()
+    scores: dict[str, tuple[ChunkMatch, float]] = {}
+    for sheet in sheets:
+        content_terms = set(
+            _query_terms(f"{sheet.group_key} {sheet.title} {sheet.content}")
+        )
+        overlap = len(terms & content_terms)
+        if overlap:
+            scores[sheet.id] = (_entity_match(sheet, 0.0), overlap / len(terms))
+    return scores
+
+
+def _entity_match(sheet: EntityFactSheet, score: float) -> ChunkMatch:
+    return ChunkMatch(
+        chunk_id=sheet.id,
+        document_id=f"{sheet.entity_type}:{sheet.entity_id}",
+        document_title=sheet.title,
+        section=sheet.group_key,
+        source_type=sheet.entity_type,
+        content=sheet.content,
+        score=score,
+    )
+
+
+def _merge_by_score(*groups: list[ChunkMatch]) -> list[ChunkMatch]:
+    by_id: dict[str, ChunkMatch] = {}
+    for group in groups:
+        for match in group:
+            existing = by_id.get(match.chunk_id)
+            if existing is None or match.score > existing.score:
+                by_id[match.chunk_id] = match
+    merged = list(by_id.values())
+    merged.sort(key=lambda match: match.score, reverse=True)
+    return merged
 
 
 def _lexical_search(

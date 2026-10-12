@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import { Button } from '../../components/ui/button'
-import { TicketsApiError, revealDeviceCredential, type Device } from '../../lib/api/tickets'
+import {
+  TicketsApiError,
+  revealDeviceCredential,
+  revealServiceCredential,
+  type Device,
+  type ServiceDetail,
+} from '../../lib/api/tickets'
 
 type RevealResult = {
   state: 'revealing' | 'revealed' | 'error'
@@ -9,23 +15,47 @@ type RevealResult = {
   message?: string
 }
 
+type CredentialSubject = {
+  id: string
+  kind: 'device' | 'service'
+  name: string
+  reference: string
+}
+
 type SensitiveCredentialRevealProps = {
   ticketId: string
   token: string
   devices: Device[]
+  services: ServiceDetail[]
 }
 
-export function SensitiveCredentialReveal({ ticketId, token, devices }: SensitiveCredentialRevealProps) {
+export function SensitiveCredentialReveal({ ticketId, token, devices, services }: SensitiveCredentialRevealProps) {
   const [results, setResults] = useState<Record<string, RevealResult>>({})
-  const revealable = devices.filter((device) => device.credential_available)
 
-  const reveal = async (device: Device) => {
-    setResults((current) => ({ ...current, [device.id]: { state: 'revealing' } }))
+  const subjects: CredentialSubject[] = [
+    ...devices
+      .filter((device) => device.credential_available)
+      .map((device) => ({ id: device.id, kind: 'device' as const, name: device.name, reference: device.device_ref })),
+    ...services
+      .filter((service) => service.credential_available)
+      .map((service) => ({
+        id: service.id,
+        kind: 'service' as const,
+        name: `${service.service_type} credential`,
+        reference: service.service_ref,
+      })),
+  ]
+
+  const reveal = async (subject: CredentialSubject) => {
+    setResults((current) => ({ ...current, [subject.id]: { state: 'revealing' } }))
     try {
-      const result = await revealDeviceCredential(ticketId, device.id, token)
+      const result =
+        subject.kind === 'device'
+          ? await revealDeviceCredential(ticketId, subject.id, token)
+          : await revealServiceCredential(ticketId, subject.id, token)
       setResults((current) => ({
         ...current,
-        [device.id]: {
+        [subject.id]: {
           state: 'revealed',
           credential: result.credential,
           credentialType: result.credential_type,
@@ -34,7 +64,7 @@ export function SensitiveCredentialReveal({ ticketId, token, devices }: Sensitiv
     } catch (error) {
       setResults((current) => ({
         ...current,
-        [device.id]: {
+        [subject.id]: {
           state: 'error',
           message:
             error instanceof TicketsApiError
@@ -47,43 +77,42 @@ export function SensitiveCredentialReveal({ ticketId, token, devices }: Sensitiv
 
   return (
     <section className="panel" aria-labelledby="credential-heading">
-      <p className="section-label">SENSITIVE FIELD DATA</p>
       <h3 id="credential-heading">Credential reveal</h3>
       <p className="muted-note">
-        Demo credentials only. Revealing records an audit event and is never written into ticket notes
+        Revealing records an audit event and is never written into ticket notes
         or the assistant conversation.
       </p>
 
-      {revealable.length === 0 ? (
+      {subjects.length === 0 ? (
         <div className="state-panel">
-          <p>No demo credential is on file for this customer's equipment.</p>
+          <p>No credential is on file for this customer's equipment or services.</p>
         </div>
       ) : (
         <ul className="credential-list">
-          {revealable.map((device) => {
-            const result = results[device.id]
+          {subjects.map((subject) => {
+            const result = results[subject.id]
             return (
-              <li className="credential-item" key={device.id}>
+              <li className="credential-item" key={subject.id}>
                 <div className="credential-head">
-                  <span className="device-name">{device.name}</span>
-                  <span className="device-ref tabular">{device.device_ref}</span>
+                  <span className="device-name">{subject.name}</span>
+                  <span className="device-ref tabular">{subject.reference}</span>
                 </div>
                 <Button
                   className="process-button"
                   type="button"
-                  onClick={() => void reveal(device)}
+                  onClick={() => void reveal(subject)}
                   disabled={result?.state === 'revealing'}
                   aria-busy={result?.state === 'revealing'}
                 >
                   {result?.state === 'revealing'
                     ? 'Revealing credential'
-                    : `Reveal credential for ${device.name}`}
+                    : `Reveal credential for ${subject.name}`}
                 </Button>
 
                 {result?.state === 'revealed' && (
                   <output className="credential-result" aria-live="polite">
                     <span className="credential-label">
-                      {result.credentialType?.replace(/_/g, ' ')} (demo)
+                      {result.credentialType?.replace(/_/g, ' ')}
                     </span>
                     <code className="credential-value tabular">{result.credential}</code>
                     <span className="credential-note">

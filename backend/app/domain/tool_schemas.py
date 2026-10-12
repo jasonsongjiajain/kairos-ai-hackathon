@@ -5,9 +5,13 @@ from pydantic import BaseModel, Field, model_validator
 
 class ToolCatalogItemRead(BaseModel):
     name: str
+    title: str
     description: str
     kind: str
+    category: str
+    risk: str
     requires_confirmation: bool
+    target_device_types: list[str] | None
 
 
 class ToolProposeRequest(BaseModel):
@@ -19,7 +23,35 @@ class ToolProposeRequest(BaseModel):
 
 class AgentToolProposeRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
-    device_id: str = Field(min_length=1, max_length=64)
+    device_id: str | None = Field(default=None, max_length=64)
+    tool_name: str | None = Field(default=None, max_length=60)
+    parameters: dict = Field(default_factory=dict)
+
+
+class AgentPlanSuggestionRead(BaseModel):
+    tool_name: str
+    title: str
+    description: str
+    kind: str
+    category: str
+    risk: str
+    requires_confirmation: bool
+    device_id: str
+    device_ref: str
+    device_type: str
+    parameters: dict
+    rationale: str
+    steps: list[str]
+    evidence: list[str]
+    confidence: float
+
+
+class AgentPlanRead(BaseModel):
+    ticket_id: str
+    question: str
+    device_id: str
+    summary: str
+    suggestions: list[AgentPlanSuggestionRead]
 
 
 

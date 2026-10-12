@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "test-only-secret")
-os.environ.setdefault("EMBEDDING_DIMENSIONS", "1536")
+os.environ.setdefault("EMBEDDING_DIMENSIONS", "1024")
 
 from app.db.base import Base
 from app.domain import models  # noqa: F401
@@ -78,7 +78,7 @@ def tool_workspace(db_session: Session):
         service_type="Granite",
         service_ref="SVC-GR-1",
         status="active",
-        details={"demo": True},
+        details={},
     )
     onu = NetworkDevice(
         customer_id=customer.id,

@@ -7,6 +7,7 @@ import { EventIntakeQueue } from '../features/intake/EventIntakeQueue'
 import { AssignedWorkList } from '../features/work/AssignedWorkList'
 import { TicketPage } from '../features/work/TicketPage'
 import { AuditPage } from '../features/audit/AuditPage'
+import { NetworkDirectory } from '../features/network/NetworkDirectory'
 
 function WorkspaceShell({ children }: { children: ReactNode }) {
   const { session, signOut } = useAuth()
@@ -24,11 +25,12 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
     <main className="app-shell">
       <header className="app-header">
         <div className="app-brand">
-          <p className="app-context">FIELD OPERATIONS</p>
+          <p className="app-context"><span className="brand-mark">F</span> FIELD FORCE</p>
           <h1>Field Force Incident Assistant</h1>
         </div>
         <nav className="workspace-nav" aria-label="Workspace">
           <NavLink to={isTechnician ? '/work' : '/operations'} aria-current="page">{workspaceLabel}</NavLink>
+          <NavLink to="/network">Customer network</NavLink>
         </nav>
         <div className="app-account">
           <span className="workspace-role">{roleLabel}</span>
@@ -55,6 +57,7 @@ export default function App() {
           <Route
             element={<ProtectedRoute allowedRoles={['technician', 'operator', 'supervisor']} />}
           >
+            <Route path="/network" element={<WorkspaceShell><NetworkDirectory /></WorkspaceShell>} />
             <Route path="/tickets/:ticketId" element={<TicketPage />} />
             <Route path="/tickets/:ticketId/audit" element={<AuditPage />} />
           </Route>

@@ -50,7 +50,7 @@ class StaticChatProvider:
 
 @pytest.fixture
 def embedder() -> LocalDeterministicEmbeddingProvider:
-    return LocalDeterministicEmbeddingProvider(1536)
+    return LocalDeterministicEmbeddingProvider(1024)
 
 
 def _workspace(session: Session) -> dict[str, object]:

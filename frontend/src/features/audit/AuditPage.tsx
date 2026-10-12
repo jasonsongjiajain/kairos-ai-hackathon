@@ -90,8 +90,7 @@ export function AuditPage() {
       )}
 
       {state === 'ready' && (
-        <section className="panel" aria-labelledby="audit-heading">
-          <p className="section-label">AUDIT</p>
+        <section className="panel audit-panel" aria-labelledby="audit-heading">
           <h3 id="audit-heading">Recorded activity</h3>
           <AuditTimeline events={events} />
         </section>

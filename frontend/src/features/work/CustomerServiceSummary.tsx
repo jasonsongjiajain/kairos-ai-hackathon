@@ -1,4 +1,4 @@
-import type { Customer, Device, ServiceDetail } from '../../lib/api/tickets'
+import type { Customer, CustomerSummary, Device, Router, ServiceDetail } from '../../lib/api/tickets'
 import { statusLabel } from './TicketHeader'
 
 const GROUPED_TYPES = ['Granite', 'HSI', 'VoBB']
@@ -7,6 +7,9 @@ type CustomerServiceSummaryProps = {
   customer: Customer
   services: ServiceDetail[]
   devices: Device[]
+  routers?: Router[]
+  customerSummary?: CustomerSummary | null
+  showDevices?: boolean
 }
 
 function detailEntries(details: Record<string, unknown>): Array<[string, string]> {
@@ -43,7 +46,11 @@ function ServiceCard({ service }: { service: ServiceDetail }) {
   )
 }
 
-export function CustomerServiceSummary({ customer, services, devices }: CustomerServiceSummaryProps) {
+function formatDate(value?: string | null): string {
+  return value ? new Date(value).toLocaleString() : 'Not recorded'
+}
+
+export function CustomerServiceSummary({ customer, services, devices, routers = [], customerSummary, showDevices = true }: CustomerServiceSummaryProps) {
   const grouped = GROUPED_TYPES.map((type) => ({
     type,
     items: services.filter((service) => service.service_type === type),
@@ -52,7 +59,7 @@ export function CustomerServiceSummary({ customer, services, devices }: Customer
 
   return (
     <section className="panel" aria-labelledby="service-summary-heading">
-      <p className="section-label">CUSTOMER CONTEXT</p>
+      <p className="section-label">Customer context</p>
       <h3 id="service-summary-heading">{customer.name}</h3>
       <p className="customer-ref tabular">{customer.customer_ref}</p>
 
@@ -61,7 +68,20 @@ export function CustomerServiceSummary({ customer, services, devices }: Customer
           <dt>Service address</dt>
           <dd>{customer.address}</dd>
         </div>
+        <div className="data-row"><dt>Account number</dt><dd>{customer.account_no || 'Not recorded'}</dd></div>
+        <div className="data-row"><dt>Contact number</dt><dd>{customer.contact_no || 'Not recorded'}</dd></div>
+        <div className="data-row"><dt>Email address</dt><dd>{customer.email_address || 'Not recorded'}</dd></div>
+        <div className="data-row"><dt>Contract term</dt><dd>{customer.contract_term ? `${customer.contract_term} years` : 'Not recorded'}</dd></div>
+        <div className="data-row"><dt>Commitment window</dt><dd>{customer.commitment_start ? `${formatDate(customer.commitment_start)} to ${formatDate(customer.commitment_end)}` : 'Not recorded'}</dd></div>
       </dl>
+
+      {customerSummary && (
+        <div className="customer-summary-block">
+          <h4>Customer summary</h4>
+          <p>{customerSummary.summary}</p>
+          {customerSummary.recommendation && <p className="muted-note">{customerSummary.recommendation}</p>}
+        </div>
+      )}
 
       <div className="service-groups">
         {grouped.map((group) =>
@@ -84,7 +104,7 @@ export function CustomerServiceSummary({ customer, services, devices }: Customer
         )}
       </div>
 
-      <div className="device-block">
+      {showDevices && <div className="device-block">
         <h4>Equipment</h4>
         {devices.length === 0 ? (
           <p className="muted-note">No equipment is recorded for this customer.</p>
@@ -98,11 +118,28 @@ export function CustomerServiceSummary({ customer, services, devices }: Customer
                 <span className={`status-pill status-${device.status.toLowerCase()}`}>
                   {statusLabel(device.status)}
                 </span>
+                {device.mac_address && <span className="device-meta">IP {device.ip_address || 'not recorded'} / RSSI {device.rssi ?? 'not recorded'}</span>}
               </li>
             ))}
           </ul>
         )}
-      </div>
+      </div>}
+
+      {routers.length > 0 && (
+        <div className="device-block">
+          <h4>Router health</h4>
+          <ul className="device-list">
+            {routers.map((router) => (
+              <li className="device-item" key={router.serial_number}>
+                <span className="device-name">{router.model || 'Router'}</span>
+                <span className="device-ref tabular">{router.serial_number}</span>
+                <span className="device-type">{router.manufacturer || 'Unknown manufacturer'}</span>
+                <span className="device-meta">CPU {router.cpu_usage_pct ?? 'not recorded'}% / Memory {router.memory_usage_pct ?? 'not recorded'}%</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   )
 }

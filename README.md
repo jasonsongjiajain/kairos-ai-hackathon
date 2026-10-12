@@ -20,11 +20,36 @@ No live TMF/NTT/OSS or real device integration is included.
    config change). State-changing actions run only after explicit approval, and every run is
    recorded in an audit timeline.
 
-The agent can select an allowlisted action from a grounded request with
-`POST /tickets/{ticket_id}/tools/agent-propose` using `{ "question": "...", "device_id": "..." }`.
-The backend checks the assigned ticket, retrieved procedure, device/customer scope, tool allowlist,
-and typed arguments. A selected read-only check runs immediately; state-changing actions are returned
-as proposals and require the separate `/confirm` call. Evidence chunk IDs are recorded in the audit event.
+The assistant chat is built from AI Elements components vendored into `frontend/src/components/ai`
+(Conversation, ChainOfThought, Confirmation, Plan, Edge) on top of shadcn/ui primitives in
+`frontend/src/components/ui`. The service topology draws active links with an animated traveling
+marker and interrupted links as dashed segments. The demo seed ships 7 curated field procedures and
+10 realistic incidents across two customers covering optical, HSI, VoBB, IPTV, Wi-Fi, CPE, and DNS.
+
+The agent can reason over the retrieved procedure and rank grounded actions, or select a single one.
+`POST /tickets/{ticket_id}/tools/agent-plan` with `{ "question": "...", "device_id": "..." }` returns up
+to four ranked suggestions (tool, rationale, configuration steps, risk tier, confidence, evidence);
+`device_id` is optional and, when omitted, the backend targets the device the request is about (for
+example a Wi-Fi channel change selects the router). To prepare the chosen suggestion, call
+`POST /tickets/{ticket_id}/tools/agent-propose` with
+`{ "question": "...", "device_id": "...", "tool_name": "...", "parameters": {...} }`; omitting
+`tool_name` lets the model make the single selection instead. The backend checks the assigned ticket,
+retrieved procedure, device/customer scope, tool allowlist, and typed arguments. A selected read-only
+check runs immediately; state-changing actions are returned as proposals and require the separate
+`/confirm` call. Evidence chunk IDs are recorded in the audit event.
+
+In the assistant, a request that reads like a change (for example "configure the router to change the
+channel to 44") triggers the plan automatically: the agent picks the target device, resolves the
+requested value (5 GHz channel 44), and shows the ordered configuration steps before anything is
+prepared. Selecting a suggestion highlights the target on the topology, and approving the action
+animates the change on the target node.
+
+The catalog spans read-only diagnostics (`get_device_status`, `list_connected_clients`,
+`run_speed_test`, `run_optical_diagnostics`) and state-changing actions across Wi-Fi, optical, service,
+and network policy (`reboot_router`, `reboot_ont`, `refresh_ont_registration`, `reset_optical_port`,
+`update_config`, `set_wifi_ssid`, `set_wifi_channel`, `flush_dns_cache`, `restart_service`,
+`block_client`, `set_dhcp_reservation`). Each tool declares a category and risk tier
+(`low`/`medium`/`high`) that the UI surfaces alongside the ranked plan.
 
 Event intake supports an optional authenticated SSE run stream. Create an event run, connect to its
 event stream, then process the event with the returned `run_id`:
@@ -80,15 +105,47 @@ DEMO_SEED_ENABLED=true
 
 All example values are local-only placeholders. Do not reuse them anywhere shared.
 
+## Model providers
+
+The chatbot, retrieval (RAG), and agent all run through provider boundaries selected by environment
+variables. By default `MODEL_PROVIDER`, `REASONING_PROVIDER`, and `EMBEDDING_PROVIDER` are `local`,
+which uses key-free deterministic providers so the demo runs offline. To use real models, set those
+three variables to `hosted` and provide the OpenAI-compatible endpoint settings
+(`MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`, `REASONING_MODEL_NAME`, `EMBEDDING_MODEL`). The
+`.env.example` already contains the hosted GIGX values; paste the real `MODEL_API_KEY` into `.env`.
+GIGX presents a private CA certificate, so set `MODEL_CA_BUNDLE=/path/to/ca.pem` if you have the CA,
+or `MODEL_TLS_VERIFY=false` for this trusted internal dev endpoint. Confirm the exact model IDs with
+`GET {MODEL_BASE_URL}/models`; they must match `MODEL_NAME`, `REASONING_MODEL_NAME`, and
+`EMBEDDING_MODEL`.
+
+The embedding dimension must match the hosted model's output size. GIGX
+`qwen3-embedding-0.6b` returns up to 1024 dimensions, so `EMBEDDING_DIMENSIONS=1024`. If you
+switch to a different embedding model, confirm its size with
+`docker compose run --rm api python -m app.integrations.embeddings`, set `EMBEDDING_DIMENSIONS`,
+and add a migration that resizes `knowledge_chunks.embedding`.
+
 ## Run the backend (Docker Compose)
 
 ```bash
 docker compose up -d db
 docker compose run --rm api alembic upgrade head
-docker compose run --rm api python -m app.seed.demo_data     # requires DEMO_SEED_ENABLED=true
-docker compose run --rm api python -m app.ai.ingestion       # fills knowledge embeddings
+docker compose run --rm api python -m app.seed.demo_data        # requires DEMO_SEED_ENABLED=true
+docker compose run --rm api python -m app.ai.ingestion --reembed  # fills knowledge embeddings
 docker compose up -d api
 ```
+
+Pass `--reembed` whenever the embedding provider or model changes: vectors from different models are
+not comparable in one index, so stored vectors must be regenerated. Without it, ingestion only fills
+chunks that have no embedding yet. Ingestion also embeds the derived entity fact sheets (router,
+optical, VoBB, IPTV, and TMFORCE ticket fields) so the assistant can cite live device and service
+data alongside curated procedures.
+
+Device, service, and ticket fields live in two layers: typed values in `entity_facts` for exact
+display and one embeddable `entity_fact_sheets` row per fact group for retrieval. Sensitive fields
+(VoBB/IPTV passwords) are marked `is_sensitive`, never enter the embedded content, and are revealed
+only through the audited credential endpoints (`/tickets/{ticket_id}/devices/{device_id}/credential`
+and `/tickets/{ticket_id}/services/{service_id}/credential`). `GET /tickets/{ticket_id}/facts`
+returns the redacted fact list for the UI.
 
 The API is then available at `http://localhost:8000` (health: `GET /health`, docs: `/docs`).
 
@@ -143,7 +200,8 @@ npm run build
 The app connects using `DATABASE_URL`. DBeaver is a database client, not a provider, and phpMyAdmin
 targets MySQL/MariaDB, so neither makes a non-PostgreSQL database compatible with this schema. The
 MVP targets PostgreSQL because relational records and `pgvector` embeddings live in one database.
-The embedding vector size is fixed at 1536; changing it requires a new migration.
+The embedding dimension is fixed by a migration (currently 1024 for the GIGX model); changing it
+requires a new migration.
 
 ## Security notes
 
