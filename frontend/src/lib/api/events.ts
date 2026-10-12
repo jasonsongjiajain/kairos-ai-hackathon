@@ -78,70 +78,24 @@ export async function fetchPendingEvents(token: string, signal?: AbortSignal): P
   return parsed.data
 }
 
-export async function processEvent(eventId: string, token: string): Promise<ProcessEventResult> {
-  return submitEvent(eventId, token)
-}
-
-export async function processEventWithUpdates(
+export async function processEvent(
   eventId: string,
   token: string,
-  onProgress: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<ProcessEventResult> {
-  let runId: string
-  try {
-    const runResponse = await fetch('/events/runs', {
-      method: 'POST',
-      headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
-      body: '{}',
-    })
-    const run = z.object({ run_id: z.string().uuid() }).safeParse(await readJson(runResponse))
-    if (!runResponse.ok || !run.success) return submitEvent(eventId, token)
-    runId = run.data.run_id
-  } catch {
-    return submitEvent(eventId, token)
-  }
-
-  const controller = new AbortController()
-  let streamResponse: Response
-  try {
-    streamResponse = await fetch(`/events/runs/${encodeURIComponent(runId)}/events`, {
-      headers: authHeaders(token),
-      signal: controller.signal,
-    })
-    if (!streamResponse.ok || !streamResponse.body) {
-      controller.abort()
-      return submitEvent(eventId, token)
-    }
-  } catch {
-    controller.abort()
-    return submitEvent(eventId, token)
-  }
-
-  const streamFinished = readEventUpdates(streamResponse, onProgress)
-  try {
-    const result = await submitEvent(eventId, token, runId)
-    await streamFinished
-    return result
-  } catch (error) {
-    controller.abort()
-    await streamFinished.catch(() => undefined)
-    throw error
-  } finally {
-    controller.abort()
-  }
-}
-
-async function submitEvent(eventId: string, token: string, runId?: string): Promise<ProcessEventResult> {
+  signal?.throwIfAborted()
   let response: Response
   try {
-    const suffix = runId ? `?run_id=${encodeURIComponent(runId)}` : ''
-    response = await fetch(`/events/${encodeURIComponent(eventId)}/process${suffix}`, {
+    response = await fetch(`/events/${encodeURIComponent(eventId)}/process`, {
       method: 'POST',
       headers: authHeaders(token),
+      signal,
     })
   } catch {
+    signal?.throwIfAborted()
     throw new EventsApiError('The event service could not be reached. Check your connection and retry.')
   }
+  signal?.throwIfAborted()
   if (!response.ok) {
     if (response.status === 404) {
       throw new EventsApiError('This event is no longer available. Reload the queue.')
@@ -155,33 +109,9 @@ async function submitEvent(eventId: string, token: string, runId?: string): Prom
     throw new EventsApiError('The event could not be processed. Retry in a moment.')
   }
   const parsed = processEventResultSchema.safeParse(await readJson(response))
+  signal?.throwIfAborted()
   if (!parsed.success) {
     throw new EventsApiError('The event service returned an unexpected response.')
   }
   return parsed.data
-}
-
-async function readEventUpdates(
-  response: Response,
-  onProgress: (message: string) => void,
-): Promise<void> {
-  const reader = response.body?.getReader()
-  if (!reader) throw new EventsApiError('The event progress stream could not be read.')
-  const decoder = new TextDecoder()
-  let buffer = ''
-  while (true) {
-    const { value, done } = await reader.read()
-    buffer += decoder.decode(value, { stream: !done })
-    const blocks = buffer.split(/\r?\n\r?\n/)
-    buffer = blocks.pop() ?? ''
-    for (const block of blocks) {
-      const eventName = block.match(/^event:\s*(.+)$/m)?.[1]
-      const data = block.match(/^data:\s*(.+)$/m)?.[1]
-      if (eventName === 'processing') onProgress('Assigning the incident to a technician...')
-      if (eventName === 'ticket_created') onProgress('Ticket created and assigned.')
-      if (eventName === 'failed') throw new EventsApiError('The event could not be processed. Retry in a moment.')
-      if (data) JSON.parse(data)
-    }
-    if (done) return
-  }
 }

@@ -1,4 +1,6 @@
 import type { AuditEvent } from '../../lib/api/audit'
+import { motion, useReducedMotion } from 'framer-motion'
+import { prefersReducedMotion, reveal } from '../../lib/motion'
 
 const EVENT_LABELS: Record<string, string> = {
   event_processed: 'Event processed into a ticket',
@@ -26,21 +28,23 @@ function describe(event: AuditEvent): string[] {
 }
 
 export function AuditTimeline({ events }: { events: AuditEvent[] }) {
+  const reducedMotion = useReducedMotion() || prefersReducedMotion()
   if (events.length === 0) {
     return (
       <p className="muted-note">
         No recorded activity for this ticket yet. Event processing, credential reveals, and device
-        actions appear here as they happen.
+        actions are recorded in this history.
       </p>
     )
   }
   return (
-    <ol className="audit-timeline">
+    <ol className="audit-timeline" aria-label="Recorded activity">
       {events.map((event) => (
-        <li key={event.id} className="audit-entry">
+        <motion.li key={event.id} className="audit-entry" initial="hidden" animate="visible"
+          variants={reveal} custom={reducedMotion}>
           <p className="audit-type">{EVENT_LABELS[event.event_type] ?? event.event_type}</p>
           <p className="audit-meta">
-            {event.actor_name ?? 'System'} · {new Date(event.created_at).toLocaleString()}
+            {event.actor_name ?? 'System'} · <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
           </p>
           {describe(event).length > 0 && (
             <ul className="audit-details">
@@ -49,7 +53,7 @@ export function AuditTimeline({ events }: { events: AuditEvent[] }) {
               ))}
             </ul>
           )}
-        </li>
+        </motion.li>
       ))}
     </ol>
   )

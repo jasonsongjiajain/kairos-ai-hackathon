@@ -190,6 +190,25 @@ def test_retrieval_returns_relevant_chunk_with_citation_metadata(db_session, emb
     )
 
 
+def test_lexical_retrieval_finds_exact_identifier_and_respects_minimum_score(db_session, embedder):
+    _add_document(
+        db_session,
+        document_key="kb-alarm-code-v1",
+        title="Alarm Code Reference",
+        source_type="curated_procedure",
+        sections={"LOS-217": "For alarm LOS-217, inspect the optical connector and record receive power."},
+    )
+    embed_missing_chunks(db_session, embedder)
+    db_session.commit()
+
+    matches = retrieval.retrieve(db_session, "LOS-217", embedder, limit=5, minimum_score=0.25)
+
+    assert matches
+    assert matches[0].document_id == "kb-alarm-code-v1"
+    assert matches[0].score >= 0.25
+    assert retrieval.retrieve(db_session, "unrelated query", embedder, minimum_score=0.99) == []
+
+
 def test_retrieval_applies_service_category_filter_and_allows_global(db_session, embedder):
     _seed_category_corpus(db_session, embedder)
 

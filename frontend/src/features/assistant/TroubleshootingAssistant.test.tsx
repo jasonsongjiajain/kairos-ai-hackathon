@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TroubleshootingAssistant } from './TroubleshootingAssistant'
@@ -71,7 +71,7 @@ describe('TroubleshootingAssistant', () => {
     render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
 
     await user.type(screen.getByLabelText('Ask about this ticket', { selector: 'textarea' }), 'Why is the ONU offline?')
-    await user.click(screen.getByRole('button', { name: 'Ask the assistant' }))
+    await user.click(screen.getByRole('button', { name: 'Send question' }))
 
     expect(
       await screen.findByText('Recommendation: inspect the optical path before dispatch.'),
@@ -79,7 +79,88 @@ describe('TroubleshootingAssistant', () => {
     expect(screen.getByText('Retrieved evidence')).toBeInTheDocument()
     expect(screen.getByText('ONU Offline Field Checks')).toBeInTheDocument()
     expect(screen.getByText('Reseat the patch lead and recheck.')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Completed')
+    const citation = screen.getByText('ONU Offline Field Checks').closest('details')
+    expect(citation).not.toHaveAttribute('open')
+    await user.click(screen.getByText('ONU Offline Field Checks'))
+    expect(citation).toHaveAttribute('open')
   })
+
+  it('submits a starter question and a keyboard follow-up', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(NO_EVIDENCE_ANSWER))
+    const user = userEvent.setup()
+    render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
+
+    await user.click(screen.getByRole('button', { name: 'What should I check first?' }))
+    expect(await screen.findByText(NO_EVIDENCE_ANSWER.answer)).toBeInTheDocument()
+    expect(screen.getByText('What should I check first?')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'What should I check first?' })).not.toBeInTheDocument()
+
+    const input = screen.getByLabelText('Ask about this ticket', { selector: 'textarea' })
+    await user.type(input, 'What about the router?')
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    expect(await screen.findByText('What about the router?')).toBeInTheDocument()
+    expect(input).toHaveValue('')
+    await waitForAssistantRequests(2)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the composer available for a follow-up while a reply is pending', async () => {
+    const pending: Array<(response: Response) => void> = []
+    vi.mocked(fetch).mockImplementation(() => new Promise((resolve) => pending.push(resolve)))
+    const user = userEvent.setup()
+    render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
+
+    await user.click(screen.getByRole('button', { name: 'What should I check first?' }))
+    const input = screen.getByLabelText('Ask about this ticket', { selector: 'textarea' })
+    expect(input).toBeEnabled()
+    expect(screen.getByText(/You can ask a follow-up while the assistant responds/)).toBeInTheDocument()
+    await user.type(input, 'Which device should I inspect?')
+    await user.click(screen.getByRole('button', { name: 'Send question' }))
+
+    expect(screen.getByText('Which device should I inspect?')).toBeInTheDocument()
+    await waitForAssistantRequests(2)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    await act(async () => pending.forEach((resolve) => resolve(jsonResponse(NO_EVIDENCE_ANSWER))))
+  })
+
+  it.each(['failure', 'no-evidence'] as const)(
+    'keeps latest evidence progress when an older request resolves with %s',
+    async (olderOutcome) => {
+      const sockets: StubSocket[] = []
+      class StubSocket extends EventTarget {
+        constructor() { super(); sockets.push(this) }
+        send = vi.fn()
+        close() { this.dispatchEvent(new Event('close')) }
+        emit(event: unknown) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) })) }
+      }
+      vi.stubGlobal('WebSocket', StubSocket)
+      const onEvidenceProgress = vi.fn()
+      const user = userEvent.setup()
+      render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} onEvidenceProgress={onEvidenceProgress} />)
+
+      await user.click(screen.getByRole('button', { name: 'What should I check first?' }))
+      await user.type(screen.getByLabelText('Ask about this ticket', { selector: 'textarea' }), 'Check the router too')
+      await user.click(screen.getByRole('button', { name: 'Send question' }))
+
+      await act(async () => {
+        sockets[1].emit({ type: 'ready' })
+        sockets[1].emit({ type: 'answer', data: CITED_ANSWER })
+      })
+      expect(onEvidenceProgress).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'complete', detail: 'Evidence returned' }))
+
+      await act(async () => {
+        sockets[0].emit({ type: 'ready' })
+        if (olderOutcome === 'failure') sockets[0].emit({ type: 'error', message: 'Older request failed' })
+        else sockets[0].emit({ type: 'answer', data: NO_EVIDENCE_ANSWER })
+      })
+
+      expect(onEvidenceProgress).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'complete', detail: 'Evidence returned' }))
+      expect(screen.getByText(CITED_ANSWER.answer)).toBeInTheDocument()
+      if (olderOutcome === 'no-evidence') expect(screen.getByText(NO_EVIDENCE_ANSWER.answer)).toBeInTheDocument()
+      else expect(screen.getByRole('alert')).toHaveTextContent('Older request failed')
+    },
+  )
 
   it('shows an explicit no-evidence response without a citation list', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(NO_EVIDENCE_ANSWER))
@@ -87,7 +168,7 @@ describe('TroubleshootingAssistant', () => {
     render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
 
     await user.type(screen.getByLabelText('Ask about this ticket', { selector: 'textarea' }), 'A question with no matching guidance')
-    await user.click(screen.getByRole('button', { name: 'Ask the assistant' }))
+    await user.click(screen.getByRole('button', { name: 'Send question' }))
 
     expect(
       await screen.findByText('No service guidance matched this question, so there is no cited procedure to rely on.'),
@@ -102,7 +183,7 @@ describe('TroubleshootingAssistant', () => {
     render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
 
     await user.type(screen.getByLabelText('Ask about this ticket', { selector: 'textarea' }), 'Why is the ONU offline?')
-    await user.click(screen.getByRole('button', { name: 'Ask the assistant' }))
+    await user.click(screen.getByRole('button', { name: 'Send question' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The assistant could not answer this question.',
@@ -146,7 +227,7 @@ describe('TroubleshootingAssistant', () => {
     render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
 
     await user.type(screen.getByLabelText('Ask about this ticket', { selector: 'textarea' }), 'The router is unreachable')
-    await user.click(screen.getByRole('button', { name: 'Ask the assistant' }))
+    await user.click(screen.getByRole('button', { name: 'Send question' }))
     await user.click(await screen.findByRole('button', { name: 'Ask agent to select an action' }))
 
     expect(await screen.findByText('Reboot the customer router')).toBeInTheDocument()
@@ -197,4 +278,79 @@ describe('TroubleshootingAssistant', () => {
     expect(progress).toContain('Searching ticket evidence and service guidance...')
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it('keeps retrieval in one row through stream failure, retry and no-evidence response', async () => {
+    const sockets: StubSocket[] = []
+    class StubSocket extends EventTarget {
+      constructor() { super(); sockets.push(this) }
+      send = vi.fn()
+      close() { this.dispatchEvent(new Event('close')) }
+      emit(event: unknown) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) })) }
+    }
+    vi.stubGlobal('WebSocket', StubSocket)
+    const user = userEvent.setup()
+    render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
+    await user.click(screen.getByRole('button', { name: 'What should I check first?' }))
+    const row = screen.getByRole('status')
+    act(() => { sockets[0].emit({ type: 'ready' }); sockets[0].emit({ type: 'retrieval_started' }) })
+    expect(row).toHaveTextContent('Searching ticket evidence and service guidance...')
+    expect(row).toHaveTextContent('Pending')
+    await act(async () => sockets[0].emit({ type: 'error', message: 'Retrieval unavailable' }))
+    expect(screen.getByRole('status')).toBe(row)
+    expect(row).toHaveTextContent('Failed')
+    await user.click(screen.getByRole('button', { name: 'Retry this question' }))
+    expect(row).toHaveTextContent('Pending')
+    act(() => sockets[1].emit({ type: 'ready' }))
+    expect(sockets[1].send).toHaveBeenCalledWith(JSON.stringify({ question: 'What should I check first?' }))
+    await act(async () => sockets[1].emit({ type: 'answer', data: NO_EVIDENCE_ANSWER }))
+    expect(screen.getByRole('status')).toBe(row)
+    expect(row).toHaveTextContent('No evidence')
+    expect(screen.getByText(NO_EVIDENCE_ANSWER.answer)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry this question' })).not.toBeInTheDocument()
+  })
+
+  it('ignores an old ticket response after switching tickets', async () => {
+    let resolve!: (response: Response) => void
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise((done) => { resolve = done }))
+    const user = userEvent.setup()
+    const { rerender } = render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
+    await user.click(screen.getByRole('button', { name: 'What should I check first?' }))
+    rerender(<TroubleshootingAssistant ticketId="ticket-2" token="token" devices={DEVICES} />)
+    await waitForAssistantRequests(1)
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
+    await act(async () => resolve(jsonResponse(CITED_ANSWER)))
+    expect(screen.queryByText(CITED_ANSWER.answer)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'What should I check first?' })).toBeInTheDocument()
+  })
+
+  it.each(['close', 'malformed'] as const)('fails honestly on %s stream without HTTP replay', async (failure) => {
+    let socket!: StubSocket
+    class StubSocket extends EventTarget {
+      constructor() { super(); socket = this }
+      send = vi.fn()
+      close() { this.dispatchEvent(new Event('close')) }
+    }
+    vi.stubGlobal('WebSocket', StubSocket)
+    const user = userEvent.setup()
+    render(<TroubleshootingAssistant ticketId="ticket-1" token="token" devices={DEVICES} />)
+    await user.click(screen.getByRole('button', { name: 'What should I check first?' }))
+    await act(async () => {
+      socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'ready' }) }))
+      if (failure === 'close') socket.close()
+      else socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'answer', data: {} }) }))
+    })
+    expect(screen.getByRole('status')).toHaveTextContent('Failed')
+    expect(screen.getByRole('button', { name: 'Retry this question' })).toBeEnabled()
+    expect(assistantMessageRequests()).toHaveLength(0)
+  })
 })
+
+function assistantMessageRequests() {
+  return vi.mocked(fetch).mock.calls.filter(([input]) =>
+    String(input).endsWith('/assistant/messages'),
+  )
+}
+
+async function waitForAssistantRequests(count: number) {
+  await vi.waitFor(() => expect(assistantMessageRequests()).toHaveLength(count))
+}

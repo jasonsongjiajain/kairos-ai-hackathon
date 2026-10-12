@@ -1,49 +1,34 @@
-import { useState } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
+import { prefersReducedMotion, reveal } from '../../lib/motion'
 import { Button } from '../../components/ui/button'
-import { EventsApiError, processEventWithUpdates, type ProcessEventResult } from '../../lib/api/events'
 
 type ProcessEventButtonProps = {
-  eventId: string
-  token: string
-  onProcessed: (result: ProcessEventResult) => void
+  submitting: boolean
+  error: string
+  onProcess: () => void
 }
 
-export function ProcessEventButton({ eventId, token, onProcessed }: ProcessEventButtonProps) {
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
-  const [progress, setProgress] = useState('')
-
-  const submit = async () => {
-    if (submitting) return
-    setSubmitting(true)
-    setError('')
-    setProgress('')
-    try {
-      const result = await processEventWithUpdates(eventId, token, setProgress)
-      onProcessed(result)
-    } catch (caught) {
-      setError(caught instanceof EventsApiError ? caught.message : 'The event could not be processed. Retry.')
-    } finally {
-      setSubmitting(false)
-      setProgress('')
-    }
-  }
+export function ProcessEventButton({ submitting, error, onProcess }: ProcessEventButtonProps) {
+  const reducedMotion = useReducedMotion() || prefersReducedMotion()
 
   return (
     <div className="process-actions">
       <Button
         className="process-button"
         type="button"
-        onClick={submit}
+        onClick={onProcess}
         disabled={submitting}
         aria-busy={submitting}
       >
-        {submitting ? progress || 'Processing event' : 'Process event'}
+        {submitting ? 'Processing event' : error ? 'Retry processing event' : 'Process event'}
       </Button>
+      <p role="status" aria-live="polite" aria-atomic="true" className="process-status">
+        {submitting && <motion.span initial="hidden" animate="visible" variants={reveal} custom={reducedMotion}>Processing event. Waiting for the ticket result.</motion.span>}
+      </p>
       {error && (
-        <p className="form-error" role="alert">
+        <motion.p initial="hidden" animate="visible" variants={reveal} custom={reducedMotion} className="form-error" role="alert">
           {error}
-        </p>
+        </motion.p>
       )}
     </div>
   )

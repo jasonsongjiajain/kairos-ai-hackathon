@@ -3,7 +3,9 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthenticatedUser, get_current_user
 from app.ai.ports import ChatCompletionProvider, EmbeddingProvider
-from app.api.assistant import get_chat_provider, get_embedding_provider
+from app.api.assistant import get_embedding_provider
+from app.config import get_settings
+from app.integrations.model_provider import build_chat_provider
 from app.services.agent_tools import AgentToolProposalError, propose_agent_tool
 from app.db.session import get_session
 from app.domain.tool_schemas import (
@@ -24,6 +26,10 @@ from app.services.tool_execution import (
 router = APIRouter(prefix="/tickets", tags=["tools"])
 
 
+def get_reasoning_provider() -> ChatCompletionProvider:
+    return build_chat_provider(get_settings(), purpose="reasoning")
+
+
 @router.post("/{ticket_id}/tools/agent-propose", response_model=ToolProposalRead, status_code=status.HTTP_201_CREATED)
 def agent_propose_tool(
     ticket_id: str,
@@ -31,7 +37,7 @@ def agent_propose_tool(
     session: Session = Depends(get_session),
     user: AuthenticatedUser = Depends(get_current_user),
     embedder: EmbeddingProvider = Depends(get_embedding_provider),
-    provider: ChatCompletionProvider = Depends(get_chat_provider),
+    provider: ChatCompletionProvider = Depends(get_reasoning_provider),
 ) -> ToolProposalRead:
     try:
         record = propose_agent_tool(

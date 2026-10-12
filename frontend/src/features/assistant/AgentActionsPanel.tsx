@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { Card } from '../../components/ui/card'
 import { Input } from '../../components/ui/input'
@@ -8,6 +8,7 @@ import type { Device } from '../../lib/api/tickets'
 import { TicketsApiError } from '../../lib/api/tickets'
 import {
   confirmTool,
+  executionFromProposal,
   fetchToolCatalog,
   proposeTool,
   type ToolCatalogItem,
@@ -17,6 +18,8 @@ import {
 import { ActionApprovalDialog } from './ActionApprovalDialog'
 import { ActionProposal } from './ActionProposal'
 import { ToolExecutionResult } from './ToolExecutionResult'
+import { ToolActivity } from './ToolActivity'
+import type { IncidentStage } from '../work/IncidentTrace'
 
 type State = 'idle' | 'preparing' | 'proposed' | 'executing' | 'done'
 
@@ -24,6 +27,9 @@ type AgentActionsPanelProps = {
   ticketId: string
   token: string
   devices: Device[]
+  onSelectDevice?: (deviceId: string) => void
+  onActionProgress?: (stage: IncidentStage, outcome?: ToolExecution) => void
+  onActionStart?: () => NonNullable<AgentActionsPanelProps['onActionProgress']>
 }
 
 const CONFIG_FIELDS: { key: string; label: string; min: number; max: number }[] = [
@@ -31,7 +37,14 @@ const CONFIG_FIELDS: { key: string; label: string; min: number; max: number }[] 
   { key: 'tx_power_dbm', label: 'Transmit power dBm (0-30)', min: 0, max: 30 },
 ]
 
-export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPanelProps) {
+export function AgentActionsPanel(props: AgentActionsPanelProps) {
+  return <ActionsSession key={`${props.ticketId}:${props.token}`} {...props} />
+}
+
+function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProgress, onActionStart }: AgentActionsPanelProps) {
+  const active = useRef(true)
+  const proposalProgress = useRef<AgentActionsPanelProps['onActionProgress']>()
+  useEffect(() => { active.current = true; return () => { active.current = false } }, [])
   const [catalog, setCatalog] = useState<ToolCatalogItem[] | null>(null)
   const [catalogState, setCatalogState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [catalogError, setCatalogError] = useState('')
@@ -42,6 +55,7 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
   const [state, setState] = useState<State>('idle')
   const [proposal, setProposal] = useState<ToolProposal | null>(null)
   const [execution, setExecution] = useState<ToolExecution | null>(null)
+  const [attempts, setAttempts] = useState<{ proposal: ToolProposal | null; execution: ToolExecution }[]>([])
   const [error, setError] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
 
@@ -50,6 +64,7 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
     setCatalogError('')
     try {
       const items = await fetchToolCatalog(ticketId, token)
+      if (!active.current) return
       setCatalog(items)
       setCatalogState('ready')
       const first = items[0]
@@ -58,6 +73,7 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
         setDeviceId((current) => current || devices[0]?.id || '')
       }
     } catch (caught) {
+      if (!active.current) return
       setCatalogState('error')
       setCatalogError(caught instanceof TicketsApiError ? caught.message : 'The action catalog could not be loaded.')
     }
@@ -66,8 +82,20 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
   const selected = useMemo(() => catalog?.find((item) => item.name === toolName) ?? null, [catalog, toolName])
 
   const prepare = async () => {
-    if (!selected || !deviceId) return
+    if (!selected || !deviceId || state === 'preparing' || state === 'executing') return
+    if (selected.name === 'update_config' && CONFIG_FIELDS.some((field) => {
+      const value = Number(configValues[field.key])
+      return !configValues[field.key]?.trim() || !Number.isInteger(value) || value < field.min || value > field.max
+    })) {
+      setError('Enter whole numbers within the configuration ranges.')
+      return
+    }
     setState('preparing')
+    const report = onActionStart?.() ?? onActionProgress
+    proposalProgress.current = report
+    if (execution) setAttempts((current) => [...current, { proposal, execution }])
+    setProposal(null)
+    report?.({ id: 'action', label: 'Action', state: 'current', detail: 'Preparing proposal' })
     setError('')
     setExecution(null)
     try {
@@ -76,25 +104,42 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
           ? Object.fromEntries(CONFIG_FIELDS.map((field) => [field.key, Number(configValues[field.key])]))
           : {}
       const created = await proposeTool(ticketId, { toolName: selected.name, deviceId, parameters }, token)
+      if (!active.current) return
       setProposal(created)
-      setState('proposed')
+      const result = executionFromProposal(created)
+      setExecution(result)
+      setState(result ? 'done' : 'proposed')
+      if (result) {
+        report?.({ id: 'action', label: 'Action', state: result.status === 'succeeded' ? 'complete' : 'blocked', detail: result.message }, result)
+      } else {
+        report?.({ id: 'action', label: 'Action', state: 'current', detail: 'Proposal ready for review' })
+      }
     } catch (caught) {
+      if (!active.current) return
       setState('idle')
+      report?.({ id: 'action', label: 'Action', state: 'blocked', detail: 'Proposal request failed' })
       setError(caught instanceof TicketsApiError ? caught.message : 'The action could not be prepared.')
     }
   }
 
   const confirm = async () => {
-    if (!proposal) return
+    if (!proposal || execution || !proposal.requires_confirmation || proposal.status !== 'proposed' || state === 'executing') return
     setState('executing')
+    const report = onActionStart?.() ?? onActionProgress
+    setExecution(null)
+    report?.({ id: 'action', label: 'Action', state: 'current', detail: 'Executing approved action' })
     setError('')
     try {
       const result = await confirmTool(ticketId, proposal.id, proposal.confirmation_id, token)
+      if (!active.current) return
       setExecution(result)
-      setProposal(null)
+      if (result.status === 'succeeded') setProposal(null)
       setDialogOpen(false)
       setState('done')
+      report?.({ id: 'action', label: 'Action', state: result.status === 'succeeded' ? 'complete' : 'blocked', detail: result.message }, result)
     } catch (caught) {
+      if (!active.current) return
+      report?.({ id: 'action', label: 'Action', state: 'blocked', detail: 'Execution request failed' })
       setState('proposed')
       setDialogOpen(false)
       setError(caught instanceof TicketsApiError ? caught.message : 'The action could not be executed.')
@@ -102,6 +147,8 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
   }
 
   const reset = () => {
+    if (execution) setAttempts((current) => [...current, { proposal, execution }])
+    setDialogOpen(false)
     setState('idle')
     setProposal(null)
     setExecution(null)
@@ -141,7 +188,7 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
       )}
 
       {catalogState === 'ready' && catalog && state !== 'done' && (
-        <div className="action-form">
+        <fieldset className="action-form" disabled={state === 'preparing' || state === 'executing' || Boolean(proposal)}>
           <Label className="field">
             <span>Action</span>
             <Select
@@ -150,6 +197,7 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
                 setToolName(value)
                 setProposal(null)
                 setState('idle')
+                setDialogOpen(false)
               }}
               aria-label="Action"
             >
@@ -200,14 +248,20 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
               {error}
             </p>
           )}
-        </div>
+        </fieldset>
       )}
 
-      {proposal && state !== 'done' && (
+      {(state !== 'idle' || error) && <ToolActivity
+        state={error || (execution && execution.status !== 'succeeded') ? 'failed' : state === 'done' ? 'completed' : state === 'proposed' ? 'needs-approval' : 'pending'}
+        label={state === 'preparing' ? 'Preparing proposal' : state === 'executing' ? 'Executing action' : 'Device action'}
+        description={error || (state === 'preparing' ? selected?.description ?? 'Requesting proposal' : proposal?.tool_name ?? execution?.tool_name ?? 'Waiting for response')} />}
+
+      {proposal && !execution && (
         <ActionProposal
           proposal={proposal}
           onReview={() => setDialogOpen(true)}
           busy={state === 'executing'}
+          onSelectDevice={onSelectDevice}
         />
       )}
 
@@ -222,7 +276,23 @@ export function AgentActionsPanel({ ticketId, token, devices }: AgentActionsPane
         />
       )}
 
-      {state === 'done' && execution && <ToolExecutionResult execution={execution} onRunAnother={reset} />}
+      {proposal && !execution && <Button type="button" variant="quiet" disabled={state === 'executing'}
+        onClick={() => {
+          proposalProgress.current?.({ id: 'action', label: 'Action', state: 'upcoming', detail: 'Proposal discarded locally; no execution requested' })
+          setDialogOpen(false)
+          reset()
+        }}>
+        Discard proposal
+      </Button>}
+
+      {execution?.status === 'failed' && proposal && proposal.requires_confirmation && <ActionProposal proposal={proposal} onSelectDevice={onSelectDevice} />}
+      {execution && <ToolExecutionResult key={execution.id} execution={execution}
+        onRunAnother={execution.status === 'failed' ? () => void prepare() : reset}
+        runAnotherLabel={execution.status === 'failed' ? 'Retry with new proposal' : undefined} onSelectDevice={onSelectDevice} />}
+      {attempts.map((attempt) => <section key={attempt.execution.id} aria-label="Previous action attempt">
+        {attempt.proposal?.requires_confirmation && <ActionProposal proposal={attempt.proposal} onSelectDevice={onSelectDevice} />}
+        <ToolExecutionResult execution={attempt.execution} onSelectDevice={onSelectDevice} />
+      </section>)}
     </Card>
   )
 }

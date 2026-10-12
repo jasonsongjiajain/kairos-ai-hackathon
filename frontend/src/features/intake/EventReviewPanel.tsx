@@ -4,9 +4,10 @@ import { ProcessEventButton } from './ProcessEventButton'
 
 type EventReviewPanelProps = {
   event: PendingEvent
-  token: string
+  submitting: boolean
+  error: string
   result: ProcessEventResult | null
-  onProcessed: (result: ProcessEventResult) => void
+  onProcess: () => void
 }
 
 function formatReceivedAt(value: string): string {
@@ -22,7 +23,7 @@ function formatValue(value: unknown): string {
   return JSON.stringify(value)
 }
 
-export function EventReviewPanel({ event, token, result, onProcessed }: EventReviewPanelProps) {
+export function EventReviewPanel({ event, submitting, error, result, onProcess }: EventReviewPanelProps) {
   const payloadEntries = Object.entries(event.payload)
 
   return (
@@ -103,7 +104,7 @@ export function EventReviewPanel({ event, token, result, onProcessed }: EventRev
           </Link>
         </div>
       ) : (
-        <ProcessEventButton eventId={event.id} token={token} onProcessed={onProcessed} />
+        <ProcessEventButton submitting={submitting} error={error} onProcess={onProcess} />
       )}
     </section>
   )

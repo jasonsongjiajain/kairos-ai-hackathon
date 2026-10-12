@@ -1,59 +1,92 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { Card, CardContent, CardHeader } from '../../components/ui/card'
 import { Label } from '../../components/ui/label'
 import { Select, SelectItem } from '../../components/ui/select'
 import type { Device } from '../../lib/api/tickets'
 import { TicketsApiError } from '../../lib/api/tickets'
-import { confirmTool, proposeAgentTool, type ToolExecution, type ToolProposal } from '../../lib/api/tools'
+import { confirmTool, executionFromProposal, proposeAgentTool, type ToolExecution, type ToolProposal } from '../../lib/api/tools'
 import { ActionApprovalDialog } from './ActionApprovalDialog'
 import { ActionProposal } from './ActionProposal'
+import { ToolActivity } from './ToolActivity'
+import { ToolExecutionResult } from './ToolExecutionResult'
+import type { IncidentStage } from '../work/IncidentTrace'
 
 type AgentSuggestedActionProps = {
   ticketId: string
   token: string
   question: string
   devices: Device[]
+  onSelectDevice?: (deviceId: string) => void
+  onActionProgress?: (stage: IncidentStage, outcome?: ToolExecution) => void
+  onActionStart?: () => NonNullable<AgentSuggestedActionProps['onActionProgress']>
 }
 
-export function AgentSuggestedAction({ ticketId, token, question, devices }: AgentSuggestedActionProps) {
+export function AgentSuggestedAction(props: AgentSuggestedActionProps) {
+  return <SuggestedActionSession key={`${props.ticketId}:${props.token}:${props.question}`} {...props} />
+}
+
+function SuggestedActionSession({ ticketId, token, question, devices, onSelectDevice, onActionProgress, onActionStart }: AgentSuggestedActionProps) {
+  const active = useRef(true)
+  useEffect(() => { active.current = true; return () => { active.current = false } }, [])
   const [deviceId, setDeviceId] = useState(devices[0]?.id ?? '')
   const [proposal, setProposal] = useState<ToolProposal | null>(null)
   const [execution, setExecution] = useState<ToolExecution | null>(null)
+  const [attempts, setAttempts] = useState<{ proposal: ToolProposal | null; execution: ToolExecution }[]>([])
   const [busy, setBusy] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [error, setError] = useState('')
 
   const prepare = async () => {
     if (!deviceId || busy) return
+    const report = onActionStart?.() ?? onActionProgress
     setBusy(true)
+    report?.({ id: 'action', label: 'Action', state: 'current', detail: 'Preparing proposal' })
     setError('')
+    if (execution) setAttempts((current) => [...current, { proposal, execution }])
     setProposal(null)
     setExecution(null)
     try {
       const result = await proposeAgentTool(ticketId, { question, deviceId }, token)
+      if (!active.current) return
       setProposal(result)
-      setBusy(false)
+      const outcome = executionFromProposal(result)
+      setExecution(outcome)
+      if (outcome) {
+        report?.({ id: 'action', label: 'Action', state: outcome.status === 'succeeded' ? 'complete' : 'blocked', detail: outcome.message }, outcome)
+      } else {
+        report?.({ id: 'action', label: 'Action', state: 'current', detail: 'Proposal ready for review' })
+      }
     } catch (caught) {
+      if (!active.current) return
+      report?.({ id: 'action', label: 'Action', state: 'blocked', detail: 'Proposal request failed' })
       setError(caught instanceof TicketsApiError ? caught.message : 'The agent could not prepare an action.')
-      setBusy(false)
+    } finally {
+      if (active.current) setBusy(false)
     }
   }
 
   const confirm = async () => {
-    if (!proposal) return
+    if (!proposal || execution || !proposal.requires_confirmation || proposal.status !== 'proposed' || busy) return
+    const report = onActionStart?.() ?? onActionProgress
     setBusy(true)
+    setExecution(null)
+    report?.({ id: 'action', label: 'Action', state: 'current', detail: 'Executing approved action' })
     setError('')
     try {
       const result = await confirmTool(ticketId, proposal.id, proposal.confirmation_id, token)
+      if (!active.current) return
       setExecution(result)
-      setProposal(null)
+      if (result.status === 'succeeded') setProposal(null)
+      report?.({ id: 'action', label: 'Action', state: result.status === 'succeeded' ? 'complete' : 'blocked', detail: result.message }, result)
       setDialogOpen(false)
     } catch (caught) {
+      if (!active.current) return
+      report?.({ id: 'action', label: 'Action', state: 'blocked', detail: 'Execution request failed' })
       setError(caught instanceof TicketsApiError ? caught.message : 'The action could not be executed.')
       setDialogOpen(false)
     } finally {
-      setBusy(false)
+      if (active.current) setBusy(false)
     }
   }
 
@@ -90,7 +123,7 @@ export function AgentSuggestedAction({ ticketId, token, question, devices }: Age
               onClick={() => void prepare()}
               disabled={busy || !deviceId}
             >
-              {busy ? 'Checking the procedure...' : 'Ask agent to select an action'}
+              {busy ? 'Preparing proposal...' : 'Ask agent to select an action'}
             </Button>
           </>
         )}
@@ -101,30 +134,22 @@ export function AgentSuggestedAction({ ticketId, token, question, devices }: Age
           </p>
         )}
 
-        {proposal && proposal.requires_confirmation && (
-          <ActionProposal proposal={proposal} onReview={() => setDialogOpen(true)} busy={busy} />
-        )}
-        {proposal && !proposal.requires_confirmation && (
-          <p className="execution-result" role="status">
-            {proposal.summary}
-          </p>
-        )}
-        {execution && (
-          <div className="execution-result" role="status">
-            <strong>{execution.status === 'succeeded' ? 'Action completed' : 'Action failed'}</strong>
-            <p>{execution.message}</p>
-            <Button
-              className="text-button"
-              type="button"
-              onClick={() => {
-                setExecution(null)
-                setProposal(null)
-              }}
-            >
-              Suggest another action
-            </Button>
-          </div>
-        )}
+        {(busy || proposal || execution || error) && <ToolActivity
+          state={error || (execution && execution.status !== 'succeeded') ? 'failed' : busy ? 'pending' : execution ? 'completed' : 'needs-approval'}
+          label={busy ? proposal ? 'Executing action' : 'Preparing proposal' : 'Device action'}
+          description={error || proposal?.tool_name || execution?.tool_name || 'Requesting a grounded action proposal.'} />}
+        {proposal && !execution && <ActionProposal proposal={proposal} onReview={() => setDialogOpen(true)} busy={busy} onSelectDevice={onSelectDevice} />}
+        {execution?.status === 'failed' && proposal && proposal.requires_confirmation && <ActionProposal proposal={proposal} onSelectDevice={onSelectDevice} />}
+        {execution && <ToolExecutionResult key={execution.id} execution={execution} onSelectDevice={onSelectDevice}
+          runAnotherLabel={execution.status === 'failed' ? 'Retry with new proposal' : undefined}
+          onRunAnother={execution.status === 'failed' ? () => void prepare() : () => {
+            setAttempts((current) => [...current, { proposal, execution }])
+            setExecution(null); setProposal(null); setError('')
+          }} />}
+        {attempts.map((attempt) => <section key={attempt.execution.id} aria-label="Previous action attempt">
+          {attempt.proposal?.requires_confirmation && <ActionProposal proposal={attempt.proposal} onSelectDevice={onSelectDevice} />}
+          <ToolExecutionResult execution={attempt.execution} onSelectDevice={onSelectDevice} />
+        </section>)}
 
         {dialogOpen && proposal && (
           <ActionApprovalDialog

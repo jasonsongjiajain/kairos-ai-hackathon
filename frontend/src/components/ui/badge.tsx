@@ -1,6 +1,8 @@
 import type { HTMLAttributes } from 'react'
 import { cn } from '../../lib/utils'
 
-export function Badge({ className, ...props }: HTMLAttributes<HTMLSpanElement>) {
-  return <span className={cn('ui-badge', className)} {...props} />
+type BadgeVariant = 'default' | 'success' | 'warning' | 'error'
+
+export function Badge({ className, variant = 'default', ...props }: HTMLAttributes<HTMLSpanElement> & { variant?: BadgeVariant }) {
+  return <span className={cn('ui-badge', variant !== 'default' && `ui-badge-${variant}`, className)} {...props} />
 }

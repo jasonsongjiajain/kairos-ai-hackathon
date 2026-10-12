@@ -6,6 +6,7 @@ stored vectors. Both paths return the same ``ChunkMatch`` shape.
 """
 
 import math
+import re
 from collections.abc import Sequence
 
 from sqlalchemy import Select, func, or_, select
@@ -18,6 +19,9 @@ from app.services import ticket_queries
 
 SCOPED_SOURCE_TYPES = frozenset({"granite", "hsi", "vobb"})
 DEFAULT_LIMIT = 5
+DEFAULT_CANDIDATE_LIMIT = 20
+VECTOR_WEIGHT = 0.7
+LEXICAL_WEIGHT = 0.3
 
 
 def document_applies_to_service(source_type: str | None, service_category: str | None) -> bool:
@@ -37,14 +41,15 @@ def retrieve(
     *,
     service_category: str | None = None,
     limit: int = DEFAULT_LIMIT,
+    minimum_score: float = 0.0,
 ) -> list[ChunkMatch]:
     query_vector = embedder.embed_query(query)
-    return resolve_vector_search(session).search(
-        session,
-        query_vector,
-        service_category=service_category,
-        limit=limit,
+    candidates = resolve_vector_search(session).search(
+        session, query_vector, service_category=service_category, limit=DEFAULT_CANDIDATE_LIMIT
     )
+    lexical_matches = _lexical_search(session, query, service_category)
+    combined = _combine_scores(candidates, lexical_matches)
+    return [match for match in combined if match.score >= minimum_score][:limit]
 
 
 def retrieve_for_ticket(
@@ -55,6 +60,7 @@ def retrieve_for_ticket(
     embedder: EmbeddingProvider,
     *,
     limit: int = DEFAULT_LIMIT,
+    minimum_score: float = 0.0,
 ) -> list[ChunkMatch]:
     """Retrieve with the service-category filter derived from an authorized ticket."""
     detail = ticket_queries.get_ticket_detail(session, ticket_id, actor)
@@ -64,7 +70,50 @@ def retrieve_for_ticket(
         embedder,
         service_category=_ticket_service_category(detail),
         limit=limit,
+        minimum_score=minimum_score,
     )
+
+
+def _lexical_search(
+    session: Session, query: str, service_category: str | None
+) -> dict[str, tuple[ChunkMatch, float]]:
+    terms = _query_terms(query)
+    if not terms:
+        return {}
+    statement: Select = (
+        select(KnowledgeChunk, KnowledgeDocument)
+        .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+        .where(KnowledgeChunk.embedding.is_not(None))
+    )
+    statement = _filter_by_category(statement, service_category)
+    rows = session.execute(statement).all()
+    scores: dict[str, tuple[ChunkMatch, float]] = {}
+    for chunk, document in rows:
+        content_terms = set(_query_terms(f"{chunk.section} {chunk.content}"))
+        overlap = len(terms & content_terms)
+        if overlap:
+            scores[chunk.id] = (_match(chunk, document, 0.0), overlap / len(terms))
+    return scores
+
+
+def _query_terms(text: str) -> set[str]:
+    return {term for term in re.findall(r"[a-z0-9]+", text.lower()) if len(term) > 1}
+
+
+def _combine_scores(
+    vector_matches: list[ChunkMatch], lexical_matches: dict[str, tuple[ChunkMatch, float]]
+) -> list[ChunkMatch]:
+    matches_by_id = {match.chunk_id: match for match in vector_matches}
+    vector_scores = {match.chunk_id: max(0.0, match.score) for match in vector_matches}
+    for chunk_id, (match, _score) in lexical_matches.items():
+        if chunk_id not in matches_by_id:
+            matches_by_id[chunk_id] = match
+    combined = []
+    for chunk_id, match in matches_by_id.items():
+        score = VECTOR_WEIGHT * vector_scores.get(chunk_id, 0.0) + LEXICAL_WEIGHT * lexical_matches.get(chunk_id, (match, 0.0))[1]
+        combined.append(ChunkMatch(**{**match.__dict__, "score": score}))
+    combined.sort(key=lambda match: match.score, reverse=True)
+    return combined
 
 
 def resolve_vector_search(session: Session) -> VectorSearch:

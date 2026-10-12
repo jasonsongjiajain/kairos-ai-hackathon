@@ -4,7 +4,7 @@ import { TicketsApiError } from './tickets'
 const catalogItemSchema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
-  kind: z.string().min(1),
+  kind: z.enum(['read_only', 'stateful']),
   requires_confirmation: z.boolean(),
 })
 
@@ -14,14 +14,16 @@ const proposalSchema = z.object({
   tool_name: z.string().min(1),
   device_id: z.string().min(1),
   device_ref: z.string().min(1),
-  kind: z.string().min(1),
+  kind: z.enum(['read_only', 'stateful']),
   requires_confirmation: z.boolean(),
   parameters: z.record(z.unknown()),
-  status: z.string().min(1),
+  status: z.enum(['proposed', 'succeeded', 'failed']),
   summary: z.string(),
   confirmation_id: z.string().min(1),
   created_at: z.string(),
-})
+}).refine((proposal) => proposal.kind === 'read_only'
+  ? !proposal.requires_confirmation && proposal.status !== 'proposed'
+  : proposal.requires_confirmation)
 
 const executionSchema = z.object({
   id: z.string().min(1),
@@ -29,7 +31,7 @@ const executionSchema = z.object({
   tool_name: z.string().min(1),
   device_id: z.string().min(1),
   device_ref: z.string().min(1),
-  status: z.string().min(1),
+  status: z.enum(['succeeded', 'failed']),
   message: z.string(),
   correlation_id: z.string().min(1),
   executed_at: z.string(),
@@ -38,6 +40,17 @@ const executionSchema = z.object({
 export type ToolCatalogItem = z.infer<typeof catalogItemSchema>
 export type ToolProposal = z.infer<typeof proposalSchema>
 export type ToolExecution = z.infer<typeof executionSchema>
+
+export function executionFromProposal(proposal: ToolProposal): ToolExecution | null {
+  if (proposal.status !== 'succeeded' && proposal.status !== 'failed') return null
+  return {
+    id: proposal.id, ticket_id: proposal.ticket_id, tool_name: proposal.tool_name,
+    device_id: proposal.device_id, device_ref: proposal.device_ref, status: proposal.status,
+    message: proposal.summary, correlation_id: proposal.confirmation_id,
+    // Backend execution records use the same row.created_at timestamp.
+    executed_at: proposal.created_at,
+  }
+}
 
 async function post(path: string, token: string, body: unknown): Promise<Response> {
   try {

@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from app.auth.dependencies import AuthenticatedUser
 from app.domain.models import AuditEvent
 from app.services import tool_execution
-from app.services.tool_execution import ToolForbiddenError
+from app.services.tool_execution import ToolForbiddenError, ToolValidationError
 
 
 def actor(workspace, key: str, role: str) -> AuthenticatedUser:
@@ -116,6 +116,32 @@ def test_update_config_applies_bounded_settings(db_session, tool_workspace):
     assert result.status == "succeeded"
     db_session.refresh(router)
     assert router.details["settings"] == {"wifi_channel": 6, "tx_power_dbm": 18}
+
+
+def test_confirmation_rechecks_action_preconditions(db_session, tool_workspace):
+    technician = actor(tool_workspace, "technician_a", "technician")
+    router = tool_workspace["router"]
+    proposal = tool_execution.propose_tool(
+        db_session,
+        tool_workspace["ticket"].id,
+        technician,
+        "reboot_router",
+        {"device_id": router.id},
+    )
+    router.status = "online"
+    db_session.flush()
+
+    with pytest.raises(ToolValidationError, match="already online"):
+        tool_execution.confirm_tool(
+            db_session,
+            tool_workspace["ticket"].id,
+            proposal.id,
+            technician,
+            proposal.correlation_id,
+        )
+
+    assert router.status == "online"
+    assert audit_count(db_session, "tool_executed") == 0
 
 
 def test_list_proposals_requires_ticket_access(db_session, tool_workspace):

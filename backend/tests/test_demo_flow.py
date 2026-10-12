@@ -9,7 +9,7 @@ from app.domain.models import AuditEvent, NetworkDevice
 from app.integrations.embeddings import LocalDeterministicEmbeddingProvider
 from app.integrations.model_provider import LocalDeterministicChatProvider
 from app.main import app
-from app.seed.demo_data import seed_demo_data
+from app.seed.demo_data import DEMO_EVENT_SOURCE_ID, seed_demo_data
 
 
 def test_demo_api_flow_creates_ticket_answers_with_evidence_and_executes_approved_tool(
@@ -38,7 +38,9 @@ def test_demo_api_flow_creates_ticket_answers_with_evidence_and_executes_approve
         operator_token = operator_login.json()["access_token"]
         pending = client.get("/events/pending", headers=_bearer(operator_token))
         assert pending.status_code == 200
-        event_id = pending.json()[0]["id"]
+        event_id = next(
+            event["id"] for event in pending.json() if event["source_event_id"] == DEMO_EVENT_SOURCE_ID
+        )
         processed = client.post(
             f"/events/{event_id}/process", headers=_bearer(operator_token)
         )

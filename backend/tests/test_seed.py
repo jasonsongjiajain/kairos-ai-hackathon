@@ -9,7 +9,7 @@ from app.domain.models import (
     ToolExecution, TopologyEdge, User,
 )
 from app.config import Settings
-from app.seed.demo_data import DEMO_ACCOUNTS, DEMO_EVENT_SOURCE_ID, seed_demo_data
+from app.seed.demo_data import DEMO_ACCOUNTS, DEMO_EVENT_SOURCE_IDS, seed_demo_data
 
 
 def test_seed_is_idempotent_and_contains_expected_demo_records(db_session, enable_demo_seed):
@@ -21,15 +21,15 @@ def test_seed_is_idempotent_and_contains_expected_demo_records(db_session, enabl
 
     assert counts_after_first_run == {
         "users": 2,
-        "customers": 1,
-        "services": 3,
-        "network_devices": 3,
-        "topology_edges": 2,
-        "network_events": 1,
-        "pending_events": 1,
+        "customers": 2,
+        "services": 6,
+        "network_devices": 6,
+        "topology_edges": 4,
+        "network_events": 3,
+        "pending_events": 3,
         "tickets": 0,
-        "knowledge_documents": 2,
-        "knowledge_chunks": 6,
+        "knowledge_documents": 5,
+        "knowledge_chunks": 15,
         "assistant_sessions": 0,
         "assistant_messages": 0,
         "tool_executions": 0,
@@ -58,10 +58,10 @@ def test_unrelated_pending_event_does_not_fail_seed_verification(db_session, ena
     ))
     db_session.commit()
 
-    assert seed_demo_data(db_session) == {"pending_events": 1, "demo_accounts": 2}
-    assert _count(db_session, NetworkEvent) == 2
-    assert _count(db_session, NetworkEvent, NetworkEvent.processed_at.is_(None)) == 2
-    assert _count(db_session, NetworkEvent, _seeded_pending_event_filter()) == 1
+    assert seed_demo_data(db_session) == {"pending_events": 3, "demo_accounts": 2}
+    assert _count(db_session, NetworkEvent) == 4
+    assert _count(db_session, NetworkEvent, NetworkEvent.processed_at.is_(None)) == 4
+    assert _count(db_session, NetworkEvent, _seeded_pending_event_filter()) == 3
 
 
 def test_seed_fails_clearly_on_divergent_demo_row(db_session, enable_demo_seed):
@@ -139,7 +139,6 @@ def _seed_counts(session):
 
 def _seeded_pending_event_filter():
     return (
-        (NetworkEvent.source_event_id == DEMO_EVENT_SOURCE_ID)
-        & (NetworkEvent.event_type == "ONU_OFFLINE")
+        NetworkEvent.source_event_id.in_(DEMO_EVENT_SOURCE_IDS)
         & NetworkEvent.processed_at.is_(None)
     )

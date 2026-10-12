@@ -20,6 +20,7 @@ from app.ai import retrieval
 from app.ai.context import BoundedContext, assemble_context
 from app.ai.ports import ChatCompletionProvider, ChatMessage, ChunkMatch, EmbeddingProvider
 from app.auth.dependencies import AuthenticatedUser
+from app.config import get_settings
 from app.domain.models import AssistantMessage, AssistantSession
 from app.domain.schemas import CREDENTIAL_KEYS
 
@@ -193,7 +194,15 @@ def answer_ticket_question(
     limit: int = retrieval.DEFAULT_LIMIT,
 ) -> AssistantAnswerRecord:
     context = assemble_context(session, ticket_id, actor)
-    matches = retrieval.retrieve_for_ticket(session, ticket_id, actor, question, embedder, limit=limit)
+    matches = retrieval.retrieve_for_ticket(
+        session,
+        ticket_id,
+        actor,
+        question,
+        embedder,
+        limit=limit,
+        minimum_score=get_settings().rag_minimum_score,
+    )
 
     if matches:
         history = _recent_history(session, ticket_id, actor.id)

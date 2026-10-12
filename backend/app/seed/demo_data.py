@@ -7,7 +7,7 @@ from pathlib import Path
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -21,6 +21,61 @@ DEMO_ACCOUNTS = {
     "technician@demo.invalid": "Demo-Technician-Only-2026!",
 }
 DEMO_EVENT_SOURCE_ID = "DEMO-EVENT-ONU-OFFLINE-001"
+
+CUSTOMERS = (
+    {"ref": "DEMO-CUST-001", "name": "Sample Household (Demo)", "address": "100 Example Lane, Sampleton"},
+    {"ref": "DEMO-CUST-002", "name": "Riverbend Cafe (Demo)", "address": "42 Riverside Walk, Sampleton"},
+)
+
+SERVICES = (
+    ("DEMO-CUST-001", "Granite", "DEMO-GR-001"),
+    ("DEMO-CUST-001", "HSI", "DEMO-HSI-001"),
+    ("DEMO-CUST-001", "VoBB", "DEMO-VOBB-001"),
+    ("DEMO-CUST-002", "Granite", "DEMO-GR-002"),
+    ("DEMO-CUST-002", "HSI", "DEMO-HSI-002"),
+    ("DEMO-CUST-002", "VoBB", "DEMO-VOBB-002"),
+)
+
+DEVICES = (
+    ("DEMO-CUST-001", "DEMO-OLT-001", "OLT", "Demo access node", "online", {}),
+    ("DEMO-CUST-001", "DEMO-ONT-001", "ONU", "Demo optical network unit", "offline", {"onu_password": "Synthetic-ONU-Credential-Only-7f3!"}),
+    ("DEMO-CUST-001", "DEMO-RTR-001", "router", "Demo home router", "unreachable", {}),
+    ("DEMO-CUST-002", "DEMO-OLT-002", "OLT", "Riverbend access node", "online", {}),
+    ("DEMO-CUST-002", "DEMO-ONT-002", "ONU", "Riverbend optical network unit", "degraded", {"onu_password": "Synthetic-ONU-Credential-Only-2c9!"}),
+    ("DEMO-CUST-002", "DEMO-RTR-002", "router", "Riverbend home router", "online", {"wifi_password": "Synthetic-WiFi-Credential-Only-4a6!"}),
+)
+
+TOPOLOGY_EDGES = (
+    ("DEMO-OLT-001", "DEMO-ONT-001", "DEMO-GR-001"),
+    ("DEMO-ONT-001", "DEMO-RTR-001", "DEMO-HSI-001"),
+    ("DEMO-OLT-002", "DEMO-ONT-002", "DEMO-GR-002"),
+    ("DEMO-ONT-002", "DEMO-RTR-002", "DEMO-HSI-002"),
+)
+
+EVENTS = (
+    {
+        "source_event_id": DEMO_EVENT_SOURCE_ID,
+        "event_type": "ONU_OFFLINE",
+        "device_ref": "DEMO-ONT-001",
+        "service_ref": "DEMO-GR-001",
+        "payload": {"demo": True, "signal_state": "no_link"},
+    },
+    {
+        "source_event_id": "DEMO-EVENT-OPTICAL-LOSS-001",
+        "event_type": "OPTICAL_LOSS",
+        "device_ref": "DEMO-ONT-002",
+        "service_ref": "DEMO-GR-002",
+        "payload": {"demo": True, "loss_db": 34.5},
+    },
+    {
+        "source_event_id": "DEMO-EVENT-HSI-DEGRADED-001",
+        "event_type": "HSI_DEGRADED",
+        "device_ref": "DEMO-RTR-001",
+        "service_ref": "DEMO-HSI-001",
+        "payload": {"demo": True, "download_mbps": 12, "expected_mbps": 500},
+    },
+)
+DEMO_EVENT_SOURCE_IDS = tuple(event["source_event_id"] for event in EVENTS)
 KNOWLEDGE_DIR = Path(__file__).resolve().parents[2] / "seed" / "knowledge"
 
 
@@ -66,49 +121,49 @@ def _seed_demo_data(session: Session) -> dict[str, int]:
         if not password_matches:
             raise RuntimeError(f"Seed conflict for demo account {email}: password hash does not match demo credentials")
 
-    customer = session.scalar(select(Customer).where(Customer.customer_ref == "DEMO-CUST-001"))
-    if customer is None:
-        customer = Customer(customer_ref="DEMO-CUST-001", name="Sample Household (Demo)", address="100 Example Lane, Sampleton", is_demo=True)
-        session.add(customer)
-        session.flush()
-    _require_canonical(customer, name="Sample Household (Demo)", address="100 Example Lane, Sampleton", is_demo=True)
+    customers = {}
+    for spec in CUSTOMERS:
+        customer = session.scalar(select(Customer).where(Customer.customer_ref == spec["ref"]))
+        if customer is None:
+            customer = Customer(customer_ref=spec["ref"], name=spec["name"], address=spec["address"], is_demo=True)
+            session.add(customer)
+            session.flush()
+        _require_canonical(customer, name=spec["name"], address=spec["address"], is_demo=True)
+        customers[spec["ref"]] = customer
 
     services = {}
-    for kind, ref in (("Granite", "DEMO-GR-001"), ("HSI", "DEMO-HSI-001"), ("VoBB", "DEMO-VOBB-001")):
+    for customer_ref, kind, ref in SERVICES:
         service = session.scalar(select(Service).where(Service.service_ref == ref))
         if service is None:
-            service = Service(customer_id=customer.id, service_type=kind, service_ref=ref, status="active", details={"demo": True})
+            service = Service(customer_id=customers[customer_ref].id, service_type=kind, service_ref=ref, status="active", details={"demo": True})
             session.add(service)
             session.flush()
-        _require_canonical(service, customer_id=customer.id, service_type=kind, status="active", details={"demo": True})
-        services[kind] = service
+        _require_canonical(service, customer_id=customers[customer_ref].id, service_type=kind, status="active", details={"demo": True})
+        services[ref] = service
 
     devices = {}
-    for ref, dtype, name, status, details in (
-        ("DEMO-OLT-001", "OLT", "Demo access node", "online", {}),
-        ("DEMO-ONT-001", "ONU", "Demo optical network unit", "offline", {"onu_password": "Synthetic-ONU-Credential-Only-7f3!"}),
-        ("DEMO-RTR-001", "router", "Demo home router", "unreachable", {}),
-    ):
+    for customer_ref, ref, dtype, name, status, details in DEVICES:
         device = session.scalar(select(NetworkDevice).where(NetworkDevice.device_ref == ref))
         if device is None:
-            device = NetworkDevice(customer_id=customer.id, device_ref=ref, device_type=dtype, name=name, status=status, details=details)
+            device = NetworkDevice(customer_id=customers[customer_ref].id, device_ref=ref, device_type=dtype, name=name, status=status, details=details)
             session.add(device)
             session.flush()
-        _require_canonical(device, customer_id=customer.id, device_type=dtype, name=name, status=status, details=details)
+        _require_canonical(device, customer_id=customers[customer_ref].id, device_type=dtype, name=name, status=status, details=details)
         devices[ref] = device
 
-    for upstream, downstream, service in (("DEMO-OLT-001", "DEMO-ONT-001", services["Granite"]), ("DEMO-ONT-001", "DEMO-RTR-001", services["HSI"])):
-        exists = session.scalar(select(TopologyEdge).where(TopologyEdge.source_device_id == devices[upstream].id, TopologyEdge.target_device_id == devices[downstream].id))
-        if not exists:
-            exists = TopologyEdge(source_device_id=devices[upstream].id, target_device_id=devices[downstream].id, service_id=service.id)
-            session.add(exists)
-        _require_canonical(exists, service_id=service.id)
+    for upstream, downstream, service_ref in TOPOLOGY_EDGES:
+        edge = session.scalar(select(TopologyEdge).where(TopologyEdge.source_device_id == devices[upstream].id, TopologyEdge.target_device_id == devices[downstream].id))
+        if edge is None:
+            edge = TopologyEdge(source_device_id=devices[upstream].id, target_device_id=devices[downstream].id, service_id=services[service_ref].id)
+            session.add(edge)
+        _require_canonical(edge, service_id=services[service_ref].id)
 
-    event = session.scalar(select(NetworkEvent).where(NetworkEvent.source_event_id == DEMO_EVENT_SOURCE_ID))
-    if event is None:
-        event = NetworkEvent(source_event_id=DEMO_EVENT_SOURCE_ID, event_type="ONU_OFFLINE", device_id=devices["DEMO-ONT-001"].id, service_id=services["Granite"].id, payload={"demo": True, "signal_state": "no_link"})
-        session.add(event)
-    _require_canonical(event, event_type="ONU_OFFLINE", device_id=devices["DEMO-ONT-001"].id, service_id=services["Granite"].id, payload={"demo": True, "signal_state": "no_link"}, processed_at=None)
+    for spec in EVENTS:
+        event = session.scalar(select(NetworkEvent).where(NetworkEvent.source_event_id == spec["source_event_id"]))
+        if event is None:
+            event = NetworkEvent(source_event_id=spec["source_event_id"], event_type=spec["event_type"], device_id=devices[spec["device_ref"]].id, service_id=services[spec["service_ref"]].id, payload=spec["payload"])
+            session.add(event)
+        _require_canonical(event, event_type=spec["event_type"], device_id=devices[spec["device_ref"]].id, service_id=services[spec["service_ref"]].id, payload=spec["payload"], processed_at=None)
 
     for path in sorted(KNOWLEDGE_DIR.glob("*.md")):
         document_id, title, version, *section_data = path.read_text().splitlines()
@@ -136,15 +191,18 @@ def _seed_demo_data(session: Session) -> dict[str, int]:
             _require_canonical(chunk, document_id=document.id, section=section, content=content)
 
     session.flush()
-    pending_event = session.scalar(
-        select(NetworkEvent).where(
-            NetworkEvent.source_event_id == DEMO_EVENT_SOURCE_ID,
-            NetworkEvent.event_type == "ONU_OFFLINE",
+    pending_count = session.scalar(
+        select(func.count())
+        .select_from(NetworkEvent)
+        .where(
+            NetworkEvent.source_event_id.in_(DEMO_EVENT_SOURCE_IDS),
             NetworkEvent.processed_at.is_(None),
         )
     )
-    if pending_event is None:
-        raise RuntimeError(f"Seed verification failed: expected pending event {DEMO_EVENT_SOURCE_ID} (ONU_OFFLINE)")
+    if pending_count != len(EVENTS):
+        raise RuntimeError(
+            f"Seed verification failed: expected {len(EVENTS)} pending demo events, found {pending_count}"
+        )
 
     expected_roles = {"operator@demo.invalid": "operator", "technician@demo.invalid": "technician"}
     verified_accounts = 0
@@ -155,7 +213,7 @@ def _seed_demo_data(session: Session) -> dict[str, int]:
         verified_accounts += 1
 
     session.commit()
-    return {"pending_events": 1, "demo_accounts": verified_accounts}
+    return {"pending_events": len(EVENTS), "demo_accounts": verified_accounts}
 
 
 def _require_canonical(row, **expected_fields) -> None:
@@ -170,7 +228,7 @@ def main() -> None:
 
     with SessionLocal() as session:
         result = seed_demo_data(session)
-    print(f"Seed verified: {result['pending_events']} pending event; {result['demo_accounts']} demo accounts")
+    print(f"Seed verified: {result['pending_events']} pending events; {result['demo_accounts']} demo accounts")
 
 
 if __name__ == "__main__":

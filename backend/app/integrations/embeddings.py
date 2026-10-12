@@ -13,6 +13,7 @@ import httpx
 
 from app.ai.ports import EmbeddingProvider
 from app.config import Settings
+from app.integrations.http import verify_setting
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
@@ -55,11 +56,15 @@ class HostedEmbeddingProvider:
         model: str,
         dimension: int,
         client: httpx.Client | None = None,
+        verify: bool | str = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        if not self.base_url.startswith("https://") and "localhost" not in self.base_url and "127.0.0.1" not in self.base_url:
+            raise ValueError("Hosted embedding API must use HTTPS")
         self.api_key = api_key
         self.model = model
         self.dimension = dimension
+        self.verify = verify
         self._client = client
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
@@ -71,15 +76,23 @@ class HostedEmbeddingProvider:
     def _request(self, text: str) -> list[float]:
         if not self.api_key or self.api_key.startswith("LOCAL_ONLY"):
             raise RuntimeError("EMBEDDING_PROVIDER=hosted requires a configured MODEL_API_KEY")
-        client = self._client or httpx.Client(timeout=30.0)
+        client = self._client or httpx.Client(timeout=30.0, verify=self.verify)
         try:
             response = client.post(
                 f"{self.base_url}/embeddings",
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                json={"model": self.model, "input": text},
+                json={"model": self.model, "input": text, "dimensions": self.dimension},
             )
             response.raise_for_status()
-            return response.json()["data"][0]["embedding"]
+            vector = response.json()["data"][0]["embedding"]
+            if not isinstance(vector, list) or len(vector) != self.dimension:
+                actual = len(vector) if isinstance(vector, list) else "invalid"
+                raise RuntimeError(
+                    f"Embedding model returned {actual} dimensions; database schema requires {self.dimension}"
+                )
+            if any(not isinstance(value, (float, int)) for value in vector):
+                raise RuntimeError("Embedding model returned non-numeric vector values")
+            return [float(value) for value in vector]
         finally:
             if self._client is None:
                 client.close()
@@ -90,11 +103,14 @@ def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
     if provider in ("", "local", "deterministic"):
         return LocalDeterministicEmbeddingProvider(settings.embedding_dimensions)
     if provider == "hosted":
+        if not settings.model_api_key or settings.model_api_key.startswith("LOCAL_ONLY"):
+            raise RuntimeError("Hosted embedding providers require MODEL_API_KEY")
         return HostedEmbeddingProvider(
             base_url=settings.model_base_url,
             api_key=settings.model_api_key,
             model=settings.embedding_model,
             dimension=settings.embedding_dimensions,
+            verify=verify_setting(settings),
         )
     raise ValueError(f"Unknown EMBEDDING_PROVIDER: {settings.embedding_provider}")
 

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthProvider } from '../features/auth/AuthProvider'
 import { ProtectedRoute, SignInRoute } from '../features/auth/ProtectedRoute'
 import type { AuthSession } from '../lib/auth/session'
+import App from './App'
 
 function WorkPage() {
   return <h1>Assigned work area</h1>
@@ -111,5 +112,41 @@ describe('authentication routes', () => {
 
     expect(await screen.findByRole('heading', { name: 'Operations queue area' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Assigned work area' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { role: 'technician', label: 'TECHNICIAN', workspace: 'Assigned work', route: '/work' },
+    { role: 'operator', label: 'OPERATOR', workspace: 'Event intake', route: '/operations' },
+    { role: 'supervisor', label: 'SUPERVISOR', workspace: 'Event intake', route: '/operations' },
+  ])('shows $label context with its active existing workspace destination', async ({ role, label, workspace, route }) => {
+    window.sessionStorage.setItem('field-force-auth-session', JSON.stringify({
+      accessToken: 'signed-token', userId: `${role}-1`, role, expiresAt: Date.now() + 60_000,
+    }))
+    render(<App />)
+
+    expect(await screen.findByRole('navigation', { name: 'Workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: workspace })).toHaveAttribute('href', route)
+    expect(screen.getByRole('link', { name: workspace })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByText(label)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Field Force Incident Assistant' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: workspace === 'Assigned work' ? 'Event intake' : 'Assigned work' })).not.toBeInTheDocument()
+
+    await userEvent.setup().click(screen.getByRole('link', { name: workspace }))
+    expect(screen.getByRole('link', { name: workspace })).toHaveAttribute('aria-current', 'page')
+    const sectionHeading = workspace === 'Assigned work' ? 'Assigned tickets' : 'Event intake'
+    expect(await screen.findByRole('heading', { name: sectionHeading })).toBeInTheDocument()
+  })
+
+  it('signs out and returns to sign-in from the workspace shell', async () => {
+    window.sessionStorage.setItem('field-force-auth-session', JSON.stringify({
+      accessToken: 'signed-token', userId: 'tech-1', role: 'technician', expiresAt: Date.now() + 60_000,
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByRole('heading', { name: 'Sign in to your field workspace' })).toBeInTheDocument()
+    expect(window.sessionStorage.getItem('field-force-auth-session')).toBeNull()
   })
 })

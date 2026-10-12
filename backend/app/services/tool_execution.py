@@ -196,6 +196,7 @@ def confirm_tool(
         raise ToolValidationError("This read-only tool executes when proposed and cannot be confirmed")
 
     params = _validate_params(spec, row.parameters)
+    _validate_preconditions(spec.name, device)
     result = _run(spec.name, device, params)
 
     if result.succeeded:
@@ -297,6 +298,11 @@ def _run(tool_name: str, device: NetworkDevice, params) -> tool_executor.Simulat
     if tool_name == "update_config":
         return tool_executor.update_config(device, params.settings)
     raise ToolNotFoundError(tool_name)
+
+
+def _validate_preconditions(tool_name: str, device: NetworkDevice) -> None:
+    if tool_name == "reboot_router" and device.status == "online":
+        raise ToolValidationError("The router is already online; refresh device status before proposing another reboot")
 
 
 def _audit(session: Session, *, actor_id: str, ticket_id: str, event_type: str, details: dict) -> None:

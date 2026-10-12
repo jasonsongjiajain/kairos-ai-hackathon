@@ -11,6 +11,7 @@ import httpx
 
 from app.ai.ports import ChatCompletionProvider, ChatMessage
 from app.config import Settings
+from app.integrations.http import verify_setting
 
 
 class LocalDeterministicChatProvider:
@@ -45,16 +46,20 @@ class HostedChatCompletionProvider:
         api_key: str,
         model: str,
         client: httpx.Client | None = None,
+        verify: bool | str = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        if not self.base_url.startswith("https://") and "localhost" not in self.base_url and "127.0.0.1" not in self.base_url:
+            raise ValueError("Hosted model API must use HTTPS")
         self.api_key = api_key
         self.model = model
+        self.verify = verify
         self._client = client
 
     def complete(self, messages: Sequence[ChatMessage], *, temperature: float = 0.0) -> str:
         if not self.api_key or self.api_key.startswith("LOCAL_ONLY"):
             raise RuntimeError("MODEL_PROVIDER=hosted requires a configured MODEL_API_KEY")
-        client = self._client or httpx.Client(timeout=60.0)
+        client = self._client or httpx.Client(timeout=60.0, verify=self.verify)
         try:
             response = client.post(
                 f"{self.base_url}/chat/completions",
@@ -66,23 +71,34 @@ class HostedChatCompletionProvider:
                 },
             )
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            payload = response.json()
+            content = payload["choices"][0]["message"]["content"]
+            if isinstance(content, list):
+                content = "".join(
+                    part.get("text", "") for part in content if isinstance(part, dict)
+                )
+            if not isinstance(content, str) or not content.strip():
+                raise RuntimeError("Chat provider returned an empty or unsupported message content")
+            return content
         finally:
             if self._client is None:
                 client.close()
 
 
-def build_chat_provider(settings: Settings) -> ChatCompletionProvider:
-    provider = settings.model_provider.strip().lower()
+def build_chat_provider(settings: Settings, *, purpose: str = "chat") -> ChatCompletionProvider:
+    provider = (settings.reasoning_provider if purpose == "reasoning" else settings.model_provider).strip().lower()
     if provider in ("", "local", "deterministic"):
         return LocalDeterministicChatProvider()
     if provider == "hosted":
+        if not settings.model_api_key or settings.model_api_key.startswith("LOCAL_ONLY"):
+            raise RuntimeError("Hosted model providers require MODEL_API_KEY")
         return HostedChatCompletionProvider(
             base_url=settings.model_base_url,
             api_key=settings.model_api_key,
-            model=settings.model_name,
+            model=settings.reasoning_model_name if purpose == "reasoning" else settings.model_name,
+            verify=verify_setting(settings),
         )
-    raise ValueError(f"Unknown MODEL_PROVIDER: {settings.model_provider}")
+    raise ValueError(f"Unknown provider for {purpose}: {provider}")
 
 
 def _extract_retrieved_chunks(messages: Sequence[ChatMessage]) -> list[dict] | None:

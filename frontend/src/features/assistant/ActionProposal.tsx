@@ -1,10 +1,13 @@
 import type { ToolProposal } from '../../lib/api/tools'
 import { Button } from '../../components/ui/button'
+import { motion, useReducedMotion } from 'framer-motion'
+import { arrive } from '../../lib/motion'
 
 type ActionProposalProps = {
   proposal: ToolProposal
-  onReview: () => void
+  onReview?: () => void
   busy?: boolean
+  onSelectDevice?: (deviceId: string) => void
 }
 
 function parameterLines(proposal: ToolProposal): string[] {
@@ -22,12 +25,14 @@ function parameterLines(proposal: ToolProposal): string[] {
   return entries
 }
 
-export function ActionProposal({ proposal, onReview, busy = false }: ActionProposalProps) {
+export function ActionProposal({ proposal, onReview, busy = false, onSelectDevice }: ActionProposalProps) {
+  const reducedMotion = Boolean(useReducedMotion())
   const lines = parameterLines(proposal)
   return (
-    <article className="proposal-card" aria-label={`Proposed action ${proposal.tool_name}`}>
+    <motion.article className="proposal-card" aria-label={`${onReview ? 'Proposed action' : 'Recorded proposal'} ${proposal.tool_name}`}
+      variants={arrive} initial="hidden" animate="visible" custom={reducedMotion}>
       <header className="proposal-header">
-        <p className="section-label">PROPOSED ACTION</p>
+        <p className="section-label">{onReview ? 'PROPOSED ACTION' : 'RECORDED PROPOSAL'}</p>
         <h4>{proposal.summary}</h4>
       </header>
       <dl className="proposal-details">
@@ -46,17 +51,20 @@ export function ActionProposal({ proposal, onReview, busy = false }: ActionPropo
           </div>
         )}
       </dl>
-      {proposal.requires_confirmation ? (
+      {onSelectDevice && <Button variant="quiet" type="button" onClick={() => onSelectDevice(proposal.device_id)}>
+        Show {proposal.device_ref} in topology
+      </Button>}
+      {onReview && (proposal.requires_confirmation ? (
         <p className="muted-note">
           This action changes the device. Review the target and effect, then approve to execute the
           simulated change.
         </p>
       ) : (
         <p className="muted-note">This is a read-only check and makes no changes.</p>
-      )}
-      <Button className="process-button" type="button" onClick={onReview} disabled={busy}>
+      ))}
+      {onReview && <Button className="process-button" type="button" onClick={onReview} disabled={busy}>
         {proposal.requires_confirmation ? 'Review and approve' : 'Run check'}
-      </Button>
-    </article>
+      </Button>}
+    </motion.article>
   )
 }

@@ -6,9 +6,10 @@ import { Textarea } from '../../components/ui/textarea'
 type AssistantComposerProps = {
   onSubmit: (question: string) => void
   disabled: boolean
+  isSearching?: boolean
 }
 
-export function AssistantComposer({ onSubmit, disabled }: AssistantComposerProps) {
+export function AssistantComposer({ onSubmit, disabled, isSearching = false }: AssistantComposerProps) {
   const [question, setQuestion] = useState('')
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -31,16 +32,26 @@ export function AssistantComposer({ onSubmit, disabled }: AssistantComposerProps
           value={question}
           onChange={(event) => setQuestion(event.target.value)}
           disabled={disabled}
+          aria-describedby="composer-hint"
+           onKeyDown={(event) => {
+             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
+               event.preventDefault()
+               event.currentTarget.form?.requestSubmit()
+             }
+           }}
           placeholder="Describe what you see and what you need to fix."
         />
       </div>
+      <div className="composer-footer">
+      <p id="composer-hint">Enter adds a line · Ctrl / ⌘ + Enter sends{isSearching ? ' · You can ask a follow-up while the assistant responds' : ''}</p>
       <Button
         className="process-button assistant-submit"
         type="submit"
         disabled={disabled || question.trim().length === 0}
       >
-        {disabled ? 'Searching service guidance' : 'Ask the assistant'}
+        {disabled ? 'Assistant unavailable' : 'Send question'}
       </Button>
+      </div>
     </form>
   )
 }

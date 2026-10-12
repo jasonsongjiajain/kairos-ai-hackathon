@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import './intake-motion.css'
 import { Button } from '../../components/ui/button'
 import { useAuth } from '../auth/AuthProvider'
 import {
   EventsApiError,
   describeEventType,
   fetchPendingEvents,
+  processEvent,
   type PendingEvent,
   type ProcessEventResult,
 } from '../../lib/api/events'
@@ -19,21 +21,34 @@ export function EventIntakeQueue() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [loadError, setLoadError] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [result, setResult] = useState<ProcessEventResult | null>(null)
+  const [results, setResults] = useState<Record<string, ProcessEventResult>>({})
+  const [requests, setRequests] = useState<Record<string, { pending: boolean; error: string }>>({})
+  const inFlight = useRef(new Map<string, AbortController>())
+  const reviewRef = useRef<HTMLDivElement>(null)
+  const focusResult = useRef(false)
+
+  useLayoutEffect(() => {
+    if (focusResult.current) {
+      reviewRef.current?.querySelector<HTMLAnchorElement>('.ticket-confirmation a')?.focus()
+      focusResult.current = false
+    }
+  }, [results])
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
       setLoadState('loading')
       setLoadError('')
-      setResult(null)
+      setResults({})
       try {
         const pending = await fetchPendingEvents(token, signal)
+        if (signal?.aborted) return
         setEvents(pending)
         setSelectedId((current) =>
           current && pending.some((event) => event.id === current) ? current : pending[0]?.id ?? null,
         )
         setLoadState('ready')
       } catch (error) {
+        if (signal?.aborted) return
         if (error instanceof DOMException && error.name === 'AbortError') return
         setLoadState('error')
         setLoadError(error instanceof EventsApiError ? error.message : 'The event queue could not be loaded.')
@@ -45,12 +60,37 @@ export function EventIntakeQueue() {
   useEffect(() => {
     const controller = new AbortController()
     void load(controller.signal)
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      for (const request of inFlight.current.values()) request.abort()
+      inFlight.current.clear()
+    }
   }, [load])
 
   const selectEvent = (eventId: string) => {
     setSelectedId(eventId)
-    setResult(null)
+  }
+
+  const process = async (eventId: string) => {
+    if (inFlight.current.has(eventId) || results[eventId]) return
+    const controller = new AbortController()
+    inFlight.current.set(eventId, controller)
+    setRequests(current => ({ ...current, [eventId]: { pending: true, error: '' } }))
+    try {
+      const result = await processEvent(eventId, token, controller.signal)
+      if (controller.signal.aborted) return
+      focusResult.current = Boolean(reviewRef.current?.dataset.eventId === eventId
+        && reviewRef.current?.contains(document.activeElement)
+        && document.activeElement?.classList.contains('process-button'))
+      setResults(current => ({ ...current, [eventId]: result }))
+      setRequests(current => ({ ...current, [eventId]: { pending: false, error: '' } }))
+    } catch (caught) {
+      if (controller.signal.aborted) return
+      const error = caught instanceof EventsApiError ? caught.message : 'The event could not be processed. Retry.'
+      setRequests(current => ({ ...current, [eventId]: { pending: false, error } }))
+    } finally {
+      if (inFlight.current.get(eventId) === controller) inFlight.current.delete(eventId)
+    }
   }
 
   if (loadState === 'loading') {
@@ -99,13 +139,15 @@ export function EventIntakeQueue() {
   }
 
   const selected = events.find((event) => event.id === selectedId) ?? events[0]
+  const unresolved = events.filter(event => !results[event.id]).length
 
   return (
     <section className="intake" aria-labelledby="intake-heading">
       <p className="section-label">INCOMING EVENTS</p>
       <h2 id="intake-heading">Event intake</h2>
       <p className="intake-intro">
-        {events.length === 1 ? '1 event is waiting to be processed.' : `${events.length} events are waiting to be processed.`}
+        {unresolved === 0 ? 'No events are waiting to be processed.'
+          : unresolved === 1 ? '1 event is waiting to be processed.' : `${unresolved} events are waiting to be processed.`}
       </p>
 
       <ul className="event-list">
@@ -128,12 +170,16 @@ export function EventIntakeQueue() {
         })}
       </ul>
 
-      <EventReviewPanel
-        event={selected}
-        token={token}
-        result={result}
-        onProcessed={setResult}
-      />
+      <div ref={reviewRef} className="intake-review" data-event-id={selected.id}>
+        <EventReviewPanel
+          key={selected.id}
+          event={selected}
+          submitting={requests[selected.id]?.pending ?? false}
+          error={requests[selected.id]?.error ?? ''}
+          result={results[selected.id] ?? null}
+          onProcess={() => void process(selected.id)}
+        />
+      </div>
     </section>
   )
 }

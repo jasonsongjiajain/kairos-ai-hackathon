@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { arrive, prefersReducedMotion, transitionFor } from '../../lib/motion'
 import { Button } from '../../components/ui/button'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
@@ -12,6 +14,7 @@ function modifier(value: string): string {
 }
 
 export function AssignedWorkList() {
+  const reducedMotion = useReducedMotion() || prefersReducedMotion()
   const { session } = useAuth()
   const token = session?.accessToken ?? ''
   const [tickets, setTickets] = useState<AssignedTicket[]>([])
@@ -82,9 +85,12 @@ export function AssignedWorkList() {
               ? '1 ticket is assigned to you.'
               : `${tickets.length} tickets are assigned to you.`}
           </p>
-          <ul className="ticket-list">
+          <ul className="ticket-list" aria-label="Assigned tickets">
+            <AnimatePresence>
             {tickets.map((ticket) => (
-              <li key={ticket.id}>
+              <motion.li key={ticket.id} initial="hidden" animate="visible"
+                variants={arrive} custom={reducedMotion}
+                exit={{ opacity: 0, transition: transitionFor(reducedMotion) }}>
                 <Link
                   className="ticket-card"
                   to={`/tickets/${ticket.id}`}
@@ -105,8 +111,9 @@ export function AssignedWorkList() {
                   </span>
                   <span className="ticket-card-ref tabular">{ticket.customer_ref}</span>
                 </Link>
-              </li>
+              </motion.li>
             ))}
+            </AnimatePresence>
           </ul>
         </>
       )}
