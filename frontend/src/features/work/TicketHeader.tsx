@@ -46,7 +46,6 @@ export function TicketHeader({ detail }: TicketHeaderProps) {
 
   return (
     <section className="panel ticket-header" aria-labelledby="ticket-heading">
-      <p className="section-label">ASSIGNED WORK</p>
       <h2 id="ticket-heading">{ticket.summary}</h2>
       <p className="ticket-status-line">
         <span className={`status-pill status-${modifier(ticket.status)}`}>{statusLabel(ticket.status)}</span>
@@ -70,6 +69,53 @@ export function TicketHeader({ detail }: TicketHeaderProps) {
           <dd className="tabular">{ticket.source_event_id}</dd>
         </div>
       </dl>
+
+      {(ticket.tm_ticket_no || ticket.ctt_activity_id || ticket.login_id || ticket.ticket_category) && (
+        <details className="ticket-operations">
+          <summary>Ticket operations</summary>
+          <dl className="data-list">
+            {ticket.tm_ticket_no && (
+              <div className="data-row">
+                <dt>Ticket number</dt>
+                <dd className="tabular">{ticket.tm_ticket_no}</dd>
+              </div>
+            )}
+            {ticket.ctt_activity_id && (
+              <div className="data-row">
+                <dt>Activity ID (CTT)</dt>
+                <dd className="tabular">{ticket.ctt_activity_id}</dd>
+              </div>
+            )}
+            {ticket.login_id && (
+              <div className="data-row">
+                <dt>Login ID</dt>
+                <dd className="tabular">{ticket.login_id}</dd>
+              </div>
+            )}
+            {ticket.ticket_category && (
+              <div className="data-row">
+                <dt>Category</dt>
+                <dd>{ticket.ticket_category}</dd>
+              </div>
+            )}
+            {assigned_technician_name && (
+              <div className="data-row">
+                <dt>Staff</dt>
+                <dd>
+                  {assigned_technician_name}
+                  {ticket.staff_code ? <span className="tabular"> ({ticket.staff_code})</span> : null}
+                </dd>
+              </div>
+            )}
+            {ticket.ticket_created_at && (
+              <div className="data-row">
+                <dt>Created</dt>
+                <dd className="tabular">{ticket.ticket_created_at}</dd>
+              </div>
+            )}
+          </dl>
+        </details>
+      )}
     </section>
   )
 }

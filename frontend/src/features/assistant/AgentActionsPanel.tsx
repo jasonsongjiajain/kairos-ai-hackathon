@@ -15,10 +15,19 @@ import {
   type ToolExecution,
   type ToolProposal,
 } from '../../lib/api/tools'
-import { ActionApprovalDialog } from './ActionApprovalDialog'
 import { ActionProposal } from './ActionProposal'
 import { ToolExecutionResult } from './ToolExecutionResult'
 import { ToolActivity } from './ToolActivity'
+import { Check, X } from '@phosphor-icons/react'
+import {
+  Confirmation,
+  ConfirmationAccepted,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRejected,
+  ConfirmationRequest,
+  ConfirmationTitle,
+} from '@/components/ai/confirmation'
 import type { IncidentStage } from '../work/IncidentTrace'
 
 type State = 'idle' | 'preparing' | 'proposed' | 'executing' | 'done'
@@ -29,13 +38,29 @@ type AgentActionsPanelProps = {
   devices: Device[]
   onSelectDevice?: (deviceId: string) => void
   onActionProgress?: (stage: IncidentStage, outcome?: ToolExecution) => void
-  onActionStart?: () => NonNullable<AgentActionsPanelProps['onActionProgress']>
+  onActionStart?: (deviceId?: string) => NonNullable<AgentActionsPanelProps['onActionProgress']>
 }
 
 const CONFIG_FIELDS: { key: string; label: string; min: number; max: number }[] = [
   { key: 'wifi_channel', label: 'Wi-Fi channel (1-13)', min: 1, max: 13 },
   { key: 'tx_power_dbm', label: 'Transmit power dBm (0-30)', min: 0, max: 30 },
 ]
+
+// Tools whose parameters are only the target device (plus update_config's
+// explicit fields) can be prepared from this direct picker. Tools that need
+// typed arguments (SSID, band, MAC, service) are offered through the agent plan.
+const DIRECT_ACTION_NAMES = new Set([
+  'get_device_status',
+  'list_connected_clients',
+  'run_speed_test',
+  'run_optical_diagnostics',
+  'reboot_router',
+  'reboot_ont',
+  'refresh_ont_registration',
+  'reset_optical_port',
+  'flush_dns_cache',
+  'update_config',
+])
 
 export function AgentActionsPanel(props: AgentActionsPanelProps) {
   return <ActionsSession key={`${props.ticketId}:${props.token}`} {...props} />
@@ -57,13 +82,14 @@ function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProg
   const [execution, setExecution] = useState<ToolExecution | null>(null)
   const [attempts, setAttempts] = useState<{ proposal: ToolProposal | null; execution: ToolExecution }[]>([])
   const [error, setError] = useState('')
-  const [dialogOpen, setDialogOpen] = useState(false)
 
   const loadCatalog = useCallback(async () => {
     setCatalogState('loading')
     setCatalogError('')
     try {
-      const items = await fetchToolCatalog(ticketId, token)
+      const items = (await fetchToolCatalog(ticketId, token)).filter((item) =>
+        DIRECT_ACTION_NAMES.has(item.name),
+      )
       if (!active.current) return
       setCatalog(items)
       setCatalogState('ready')
@@ -91,7 +117,7 @@ function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProg
       return
     }
     setState('preparing')
-    const report = onActionStart?.() ?? onActionProgress
+    const report = onActionStart?.(deviceId) ?? onActionProgress
     proposalProgress.current = report
     if (execution) setAttempts((current) => [...current, { proposal, execution }])
     setProposal(null)
@@ -125,7 +151,7 @@ function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProg
   const confirm = async () => {
     if (!proposal || execution || !proposal.requires_confirmation || proposal.status !== 'proposed' || state === 'executing') return
     setState('executing')
-    const report = onActionStart?.() ?? onActionProgress
+    const report = onActionStart?.(deviceId) ?? onActionProgress
     setExecution(null)
     report?.({ id: 'action', label: 'Action', state: 'current', detail: 'Executing approved action' })
     setError('')
@@ -134,21 +160,18 @@ function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProg
       if (!active.current) return
       setExecution(result)
       if (result.status === 'succeeded') setProposal(null)
-      setDialogOpen(false)
       setState('done')
       report?.({ id: 'action', label: 'Action', state: result.status === 'succeeded' ? 'complete' : 'blocked', detail: result.message }, result)
     } catch (caught) {
       if (!active.current) return
       report?.({ id: 'action', label: 'Action', state: 'blocked', detail: 'Execution request failed' })
       setState('proposed')
-      setDialogOpen(false)
       setError(caught instanceof TicketsApiError ? caught.message : 'The action could not be executed.')
     }
   }
 
   const reset = () => {
     if (execution) setAttempts((current) => [...current, { proposal, execution }])
-    setDialogOpen(false)
     setState('idle')
     setProposal(null)
     setExecution(null)
@@ -157,7 +180,6 @@ function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProg
 
   return (
     <Card className="panel" aria-labelledby="actions-heading">
-      <p className="section-label">AGENT ACTIONS</p>
       <h3 id="actions-heading">Choose a device action</h3>
       <p className="muted-note">
         Select an allowlisted action directly. State-changing actions run only after you review and
@@ -197,7 +219,6 @@ function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProg
                 setToolName(value)
                 setProposal(null)
                 setState('idle')
-                setDialogOpen(false)
               }}
               aria-label="Action"
             >
@@ -256,41 +277,55 @@ function ActionsSession({ ticketId, token, devices, onSelectDevice, onActionProg
         label={state === 'preparing' ? 'Preparing proposal' : state === 'executing' ? 'Executing action' : 'Device action'}
         description={error || (state === 'preparing' ? selected?.description ?? 'Requesting proposal' : proposal?.tool_name ?? execution?.tool_name ?? 'Waiting for response')} />}
 
-      {proposal && !execution && (
-        <ActionProposal
-          proposal={proposal}
-          onReview={() => setDialogOpen(true)}
-          busy={state === 'executing'}
-          onSelectDevice={onSelectDevice}
-        />
-      )}
-
-      {dialogOpen && proposal && (
-        <ActionApprovalDialog
-          title="Approve device action"
-          description={`${proposal.summary} This runs a simulated change on the demo device.`}
-          confirmLabel="Approve and run"
-          busy={state === 'executing'}
-          onConfirm={() => void confirm()}
-          onCancel={() => setDialogOpen(false)}
-        />
+      {proposal && !execution && proposal.requires_confirmation && (
+        <>
+          <ActionProposal proposal={proposal} onSelectDevice={onSelectDevice} />
+          <Confirmation approval={{ id: proposal.id }} state="approval-requested" className="action-confirmation">
+            <ConfirmationTitle>
+              <ConfirmationRequest>
+                <span className="confirmation-request-text">
+                  Approve this simulated change before it runs on the target device.
+                </span>
+              </ConfirmationRequest>
+              <ConfirmationAccepted>
+                <Check size={16} className="action-approved-icon" aria-hidden="true" />
+                <span>You approved this simulated action</span>
+              </ConfirmationAccepted>
+              <ConfirmationRejected>
+                <X size={16} className="action-rejected-icon" aria-hidden="true" />
+                <span>You rejected this simulated action</span>
+              </ConfirmationRejected>
+            </ConfirmationTitle>
+            <ConfirmationActions>
+              <ConfirmationAction variant="outline" disabled={state === 'executing'}
+                onClick={() => {
+                  proposalProgress.current?.({ id: 'action', label: 'Action', state: 'upcoming', detail: 'Proposal rejected locally; no execution requested' })
+                  reset()
+                }}>
+                Reject
+              </ConfirmationAction>
+              <ConfirmationAction disabled={state === 'executing'} onClick={() => void confirm()}>
+                {state === 'executing' ? 'Executing…' : 'Approve and run'}
+              </ConfirmationAction>
+            </ConfirmationActions>
+          </Confirmation>
+        </>
       )}
 
       {proposal && !execution && <Button type="button" variant="quiet" disabled={state === 'executing'}
         onClick={() => {
           proposalProgress.current?.({ id: 'action', label: 'Action', state: 'upcoming', detail: 'Proposal discarded locally; no execution requested' })
-          setDialogOpen(false)
           reset()
         }}>
         Discard proposal
       </Button>}
 
-      {execution?.status === 'failed' && proposal && proposal.requires_confirmation && <ActionProposal proposal={proposal} onSelectDevice={onSelectDevice} />}
+      {execution?.status === 'failed' && proposal && proposal.requires_confirmation && <ActionProposal proposal={proposal} recorded onSelectDevice={onSelectDevice} />}
       {execution && <ToolExecutionResult key={execution.id} execution={execution}
         onRunAnother={execution.status === 'failed' ? () => void prepare() : reset}
         runAnotherLabel={execution.status === 'failed' ? 'Retry with new proposal' : undefined} onSelectDevice={onSelectDevice} />}
       {attempts.map((attempt) => <section key={attempt.execution.id} aria-label="Previous action attempt">
-        {attempt.proposal?.requires_confirmation && <ActionProposal proposal={attempt.proposal} onSelectDevice={onSelectDevice} />}
+        {attempt.proposal?.requires_confirmation && <ActionProposal proposal={attempt.proposal} recorded onSelectDevice={onSelectDevice} />}
         <ToolExecutionResult execution={attempt.execution} onSelectDevice={onSelectDevice} />
       </section>)}
     </Card>

@@ -5,17 +5,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # This initial schema is fixed at 1536. A different size needs a new migration.
-    embedding_dimensions: int = 1536
+    # Must match the hosted embedding model's output size. GIGX qwen3-embedding-0.6b
+    # returns up to 1024 dimensions. Changing this requires a new migration.
+    embedding_dimensions: int = 1024
     rag_minimum_score: float = 0.0
     demo_seed_enabled: bool = False
     database_url: str
     jwt_secret: str
     model_api_key: str = "LOCAL_ONLY_NO_PROVIDER_KEY_CONFIGURED"
-    model_name: str = "gigx/gemma-4-e2b-it"
-    reasoning_model_name: str = "gigx/qwen3-vl-4b-instruct"
+    model_name: str = "gemma-4-e2b-it"
+    reasoning_model_name: str = "qwen3-vl-4b-instruct"
     model_base_url: str = "https://gigx.nexa-dev.tm.com.my/llm/v1"
-    embedding_model: str = "gigx/qwen3-embedding-0.6b"
+    embedding_model: str = "qwen3-embedding-0.6b"
     # Local mode remains key-free. Set both provider variables to "hosted" to use GIGX.
     embedding_provider: str = "local"
     model_provider: str = "local"
@@ -27,9 +28,9 @@ class Settings(BaseSettings):
 
     @field_validator("embedding_dimensions")
     @classmethod
-    def require_initial_embedding_dimensions(cls, value: int) -> int:
-        if value != 1536:
-            raise ValueError("The initial schema uses 1536 dimensions; changing it requires a new migration")
+    def require_positive_embedding_dimensions(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("EMBEDDING_DIMENSIONS must be a positive integer")
         return value
 
     @field_validator("rag_minimum_score")

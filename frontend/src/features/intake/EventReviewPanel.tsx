@@ -28,9 +28,9 @@ export function EventReviewPanel({ event, submitting, error, result, onProcess }
 
   return (
     <section className="review-panel" aria-labelledby="review-heading">
-      <p className="section-label">SELECTED EVENT</p>
+      <p className="section-label">Selected event</p>
       <h3 id="review-heading">{describeEventType(event.event_type)}</h3>
-      <p className="event-provenance">Seeded demo event</p>
+      <p className="event-provenance">Ingested network event</p>
 
       <dl className="data-list">
         <div className="data-row">

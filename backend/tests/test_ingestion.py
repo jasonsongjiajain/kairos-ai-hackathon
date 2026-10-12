@@ -11,7 +11,7 @@ from app.integrations.embeddings import LocalDeterministicEmbeddingProvider
 
 
 class RecordingEmbeddingProvider:
-    dimension = 1536
+    dimension = 1024
 
     def __init__(self) -> None:
         self.document_calls: list[list[str]] = []
@@ -26,7 +26,7 @@ class RecordingEmbeddingProvider:
 
 @pytest.fixture
 def embedder() -> LocalDeterministicEmbeddingProvider:
-    return LocalDeterministicEmbeddingProvider(1536)
+    return LocalDeterministicEmbeddingProvider(1024)
 
 
 def _chunk_count(session: Session) -> int:
@@ -45,7 +45,9 @@ def test_chunking_retains_metadata_with_stable_versioned_ids():
     assert [chunk.section for chunk in document.chunks] == [
         "Confirm service impact",
         "Inspect optical path",
-        "Escalate",
+        "Verify ONU power and indicators",
+        "Check the upstream access node",
+        "Record findings and escalate",
     ]
     first = document.chunks[0]
     assert first.chunk_id == "kb-onu-offline-v1:1.0:confirm-service-impact"
@@ -59,26 +61,26 @@ def test_ingestion_is_repeatable_and_idempotent(db_session, embedder):
     first = index_knowledge(db_session, embedder)
     db_session.commit()
 
-    assert first.documents == 5
-    assert first.chunks == 15
-    assert first.embeddings_generated == 15
+    assert first.documents == 7
+    assert first.chunks == 35
+    assert first.embeddings_generated == 35
     assert first.embeddings_reused == 0
 
     embeddings_first = {
         chunk.id: list(chunk.embedding)
         for chunk in db_session.scalars(select(KnowledgeChunk)).all()
     }
-    assert len(embeddings_first) == 15
-    assert all(len(vector) == 1536 for vector in embeddings_first.values())
+    assert len(embeddings_first) == 35
+    assert all(len(vector) == 1024 for vector in embeddings_first.values())
 
     second = index_knowledge(db_session, embedder)
     db_session.commit()
 
-    assert second.documents == 5
-    assert second.chunks == 15
+    assert second.documents == 7
+    assert second.chunks == 35
     assert second.embeddings_generated == 0
-    assert second.embeddings_reused == 15
-    assert _chunk_count(db_session) == 15
+    assert second.embeddings_reused == 35
+    assert _chunk_count(db_session) == 35
 
     embeddings_second = {
         chunk.id: list(chunk.embedding)
@@ -111,7 +113,36 @@ def test_embed_missing_chunks_fills_seeded_rows(db_session, embedder):
     assert (generated, reused) == (1, 0)
     refreshed = db_session.get(KnowledgeChunk, "kb-demo-v1:1.0:intro")
     assert refreshed.embedding is not None
-    assert len(refreshed.embedding) == 1536
+    assert len(refreshed.embedding) == 1024
+
+
+def test_reembed_discards_stored_vectors_and_regenerates(db_session, embedder):
+    class ConstantEmbeddingProvider:
+        dimension = 1024
+
+        def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+            return [[1.0] * self.dimension for _ in texts]
+
+        def embed_query(self, text: str) -> list[float]:
+            return [1.0] * self.dimension
+
+    index_knowledge(db_session, embedder)
+    db_session.commit()
+    assert all(
+        list(chunk.embedding) != [1.0] * 1024
+        for chunk in db_session.scalars(select(KnowledgeChunk)).all()
+    )
+
+    generated, reused = embed_missing_chunks(
+        db_session, ConstantEmbeddingProvider(), reembed=True
+    )
+    db_session.commit()
+
+    assert (generated, reused) == (35, 0)
+    assert all(
+        list(chunk.embedding) == [1.0] * 1024
+        for chunk in db_session.scalars(select(KnowledgeChunk)).all()
+    )
 
 
 def test_ingestion_uses_the_injected_embedding_provider(db_session):
@@ -122,7 +153,7 @@ def test_ingestion_uses_the_injected_embedding_provider(db_session):
 
     assert provider.document_calls
     embedded_texts = [text for call in provider.document_calls for text in call]
-    assert len(embedded_texts) == 15
+    assert len(embedded_texts) == 35
     assert all(text.strip() for text in embedded_texts)
 
 

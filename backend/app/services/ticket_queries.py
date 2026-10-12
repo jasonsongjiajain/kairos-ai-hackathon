@@ -5,6 +5,8 @@ returns data. The HTTP layer only translates records into response schemas, so a
 caller cannot read another user's work by calling the service directly either.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -15,13 +17,17 @@ from app.auth.policy import require_assigned_ticket, require_customer_scope, req
 from app.domain.models import (
     AuditEvent,
     Customer,
+    EntityFact,
     NetworkDevice,
+    Router,
+    CustomerSummary,
     Service,
     Ticket,
     TopologyEdge,
     User,
 )
 from app.domain.schemas import find_credential
+from app.services.entity_facts import list_facts_for_entities
 
 TICKET_FULL_SCOPE_ROLES = ("operator", "supervisor")
 TECHNICIAN_ROLE = ("technician",)
@@ -64,6 +70,7 @@ class DeviceRecord:
     name: str
     status: str
     credential_available: bool
+    source: NetworkDevice
 
 
 @dataclass(frozen=True)
@@ -73,6 +80,8 @@ class TicketDetailRecord:
     customer: Customer
     services: list[Service]
     devices: list[DeviceRecord]
+    routers: list[Router]
+    customer_summary: CustomerSummary | None
 
 
 @dataclass(frozen=True)
@@ -80,6 +89,16 @@ class CustomerDetailRecord:
     customer: Customer
     services: list[Service]
     devices: list[DeviceRecord]
+    routers: list[Router]
+    customer_summary: CustomerSummary | None
+
+
+@dataclass(frozen=True)
+class NetworkCustomerRecord:
+    customer: Customer
+    devices: list[NetworkDevice]
+    routers: list[Router]
+    summary: CustomerSummary | None
 
 
 @dataclass(frozen=True)
@@ -114,6 +133,14 @@ class TopologyPathRecord:
 class CredentialRevealRecord:
     device_id: str
     device_ref: str
+    credential_type: str
+    credential: str
+
+
+@dataclass(frozen=True)
+class ServiceCredentialRevealRecord:
+    service_id: str
+    service_ref: str
     credential_type: str
     credential: str
 
@@ -161,12 +188,15 @@ def get_ticket_detail(session: Session, ticket_id: str, actor: AuthenticatedUser
         ).all()
     )
     devices = _customer_devices(session, ticket.customer_id)
+    customer_ref = customer.customer_ref
     return TicketDetailRecord(
         ticket=ticket,
         assigned_technician_name=assigned.display_name if assigned is not None else "",
         customer=customer,
         services=services,
         devices=devices,
+        routers=list(session.scalars(select(Router).where(Router.login_id == customer_ref).order_by(Router.serial_number)).all()),
+        customer_summary=session.get(CustomerSummary, customer_ref),
     )
 
 
@@ -209,7 +239,55 @@ def get_customer_detail(session: Session, customer_id: str, actor: Authenticated
         customer=customer,
         services=services,
         devices=_customer_devices(session, customer_id),
+        routers=list(
+            session.scalars(
+                select(Router).where(Router.login_id == customer.customer_ref).order_by(Router.serial_number)
+            ).all()
+        ),
+        customer_summary=session.get(CustomerSummary, customer.customer_ref),
     )
+
+
+def list_network_customers(session: Session, actor: AuthenticatedUser) -> list[NetworkCustomerRecord]:
+    """Full customer directory with the migrated UniFi devices, routers, and summary."""
+    require_role(actor.role, TECHNICIAN_ROLE + TICKET_FULL_SCOPE_ROLES)
+    customers = list(session.scalars(select(Customer).order_by(Customer.name)).all())
+    if not customers:
+        return []
+    customer_ids = [customer.id for customer in customers]
+    refs = [customer.customer_ref for customer in customers]
+
+    devices_by_customer: dict[str, list[NetworkDevice]] = {customer_id: [] for customer_id in customer_ids}
+    for device in session.scalars(
+        select(NetworkDevice)
+        .where(NetworkDevice.customer_id.in_(customer_ids))
+        .order_by(NetworkDevice.device_ref)
+    ).all():
+        if device.customer_id is not None:
+            devices_by_customer.setdefault(device.customer_id, []).append(device)
+
+    routers_by_login: dict[str, list[Router]] = {}
+    for router in session.scalars(
+        select(Router).where(Router.login_id.in_(refs)).order_by(Router.serial_number)
+    ).all():
+        routers_by_login.setdefault(router.login_id, []).append(router)
+
+    summaries = {
+        summary.login_id: summary
+        for summary in session.scalars(
+            select(CustomerSummary).where(CustomerSummary.login_id.in_(refs))
+        ).all()
+    }
+
+    return [
+        NetworkCustomerRecord(
+            customer=customer,
+            devices=devices_by_customer.get(customer.id, []),
+            routers=routers_by_login.get(customer.customer_ref, []),
+            summary=summaries.get(customer.customer_ref),
+        )
+        for customer in customers
+    ]
 
 
 def get_ticket_topology(session: Session, ticket_id: str, actor: AuthenticatedUser) -> TopologyPathRecord:
@@ -312,6 +390,58 @@ def reveal_device_credential(
     )
 
 
+def reveal_service_credential(
+    session: Session,
+    ticket_id: str,
+    service_id: str,
+    actor: AuthenticatedUser,
+) -> ServiceCredentialRevealRecord:
+    require_role(actor.role, TECHNICIAN_ROLE)
+    ticket = session.get(Ticket, ticket_id)
+    if ticket is None:
+        raise TicketNotFoundError(ticket_id)
+    require_assigned_ticket(actor.id, ticket.assigned_technician_id, actor.role)
+
+    service = session.get(Service, service_id)
+    if service is None or service.customer_id != ticket.customer_id:
+        raise CredentialUnavailableError(service_id)
+    found = find_credential(service.details)
+    if found is None:
+        raise CredentialUnavailableError(service_id)
+    credential_type, credential = found
+
+    session.add(
+        AuditEvent(
+            actor_id=actor.id,
+            ticket_id=ticket.id,
+            event_type="credential_revealed",
+            details={
+                "service_id": service.id,
+                "service_ref": service.service_ref,
+                "credential_type": credential_type,
+            },
+        )
+    )
+    session.commit()
+
+    return ServiceCredentialRevealRecord(
+        service_id=service.id,
+        service_ref=service.service_ref,
+        credential_type=credential_type,
+        credential=credential,
+    )
+
+
+def list_ticket_facts(
+    session: Session, ticket_id: str, actor: AuthenticatedUser
+) -> list[EntityFact]:
+    detail = get_ticket_detail(session, ticket_id, actor)
+    entity_ids = [detail.ticket.id]
+    entity_ids.extend(service.id for service in detail.services)
+    entity_ids.extend(device.id for device in detail.devices)
+    return list_facts_for_entities(session, entity_ids)
+
+
 def _authorized_ticket(session: Session, ticket_id: str, actor: AuthenticatedUser) -> Ticket:
     ticket = session.get(Ticket, ticket_id)
     if ticket is None:
@@ -350,6 +480,7 @@ def _device_record(device: NetworkDevice) -> DeviceRecord:
         name=device.name,
         status=device.status,
         credential_available=find_credential(device.details) is not None,
+        source=device,
     )
 
 

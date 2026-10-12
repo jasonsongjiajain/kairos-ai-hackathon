@@ -21,6 +21,14 @@ EVENT_PROCESSING_ROLES = ("operator", "supervisor")
 _SEVERITY_BY_EVENT_TYPE = {
     "ONU_OFFLINE": "high",
     "OPTICAL_LOSS": "high",
+    "OPTICAL_DEGRADE": "high",
+    "CPE_REBOOT_LOOP": "high",
+    "VOBB_REGISTRATION_FAILED": "high",
+    "HSI_DEGRADED": "medium",
+    "IPTV_STREAM_DEGRADED": "medium",
+    "WIFI_INTERFERENCE": "medium",
+    "DNS_RESOLUTION_FAILURE": "medium",
+    "DEVICE_OFFLINE": "medium",
 }
 _DEFAULT_SEVERITY = "medium"
 

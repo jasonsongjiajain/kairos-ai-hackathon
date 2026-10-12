@@ -2,6 +2,7 @@ import type { ToolExecution } from '../../lib/api/tools'
 import { Button } from '../../components/ui/button'
 import { motion, useReducedMotion } from 'framer-motion'
 import { reveal, settle } from '../../lib/motion'
+import { ToolCall } from '../../components/ai/tool-call'
 
 type ToolExecutionResultProps = {
   execution: ToolExecution
@@ -16,6 +17,7 @@ export function ToolExecutionResult({ execution, onRunAnother, onSelectDevice, r
   return (
     <motion.div className={`execution-result ${succeeded ? 'is-success' : 'is-failure'}`} role="status" aria-live="polite"
       variants={succeeded ? settle : reveal} initial="hidden" animate="visible" custom={reducedMotion}>
+      <ToolCall title="Execution result" status={succeeded ? 'completed' : 'failed'} correlationId={execution.correlation_id}>
       <p className={`execution-status ${succeeded ? 'is-success' : 'is-failure'}`}>
         <span aria-hidden="true">{succeeded ? 'OK' : 'FAILED'}</span>{' '}
         {succeeded ? 'Action completed' : 'Action failed'}
@@ -41,6 +43,7 @@ export function ToolExecutionResult({ execution, onRunAnother, onSelectDevice, r
       {onRunAnother && <Button className="text-button" variant="quiet" type="button" onClick={onRunAnother}>
         {runAnotherLabel}
       </Button>}
+      </ToolCall>
     </motion.div>
   )
 }

@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -73,6 +74,9 @@ async def stream_assistant_message(
             except AssistantFormatError:
                 await websocket.send_json({"type": "error", "message": "The assistant returned an unreadable answer. Retry the question."})
                 continue
+            except (RuntimeError, httpx.HTTPError):
+                await websocket.send_json({"type": "error", "message": "The model service is unavailable. Check provider settings and connectivity, then retry."})
+                continue
             await websocket.send_json({"type": "answer", "data": _to_read(record).model_dump()})
             await websocket.send_json({"type": "complete", "session_id": record.session_id})
     except WebSocketDisconnect:
@@ -114,6 +118,11 @@ def create_assistant_message(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The assistant returned an unreadable answer. Retry the question.",
+        ) from error
+    except (RuntimeError, httpx.HTTPError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The model service is unavailable. Check provider settings and connectivity.",
         ) from error
 
     return _to_read(record)

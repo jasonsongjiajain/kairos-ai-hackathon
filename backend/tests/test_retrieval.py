@@ -29,7 +29,7 @@ from app.services.ticket_queries import TicketNotFoundError
 def embedder():
     from app.integrations.embeddings import LocalDeterministicEmbeddingProvider
 
-    return LocalDeterministicEmbeddingProvider(1536)
+    return LocalDeterministicEmbeddingProvider(1024)
 
 
 def _add_document(

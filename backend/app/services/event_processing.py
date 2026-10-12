@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha1
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -7,9 +8,10 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import AuthenticatedUser
 from app.auth.policy import require_role
 from app.domain import event_rules
-from app.domain.models import NetworkDevice, Ticket, User
+from app.domain.models import Customer, NetworkDevice, Ticket, User
 from app.repositories import events as events_repo
 from app.repositories import tickets as tickets_repo
+from app.services.entity_facts import sync_ticket_facts
 
 
 class EventNotFoundError(Exception):
@@ -57,6 +59,9 @@ def process_event(session: Session, event_id: str, actor: AuthenticatedUser) -> 
     if technician is None:
         raise NoTechnicianAvailableError(event_id)
 
+    customer = session.get(Customer, customer_id)
+    created_at = datetime.now(UTC)
+    ticket_number_suffix = sha1(event.source_event_id.encode()).hexdigest()[:4].upper()
     ticket = Ticket(
         source_event_id=event.id,
         customer_id=customer_id,
@@ -65,11 +70,18 @@ def process_event(session: Session, event_id: str, actor: AuthenticatedUser) -> 
         severity=event_rules.severity_for_event(event.event_type),
         status="open",
         summary=event_rules.summary_for_event(event, device),
+        tm_ticket_no=f'INC-{created_at:%Y%m%d}-{ticket_number_suffix}',
+        ctt_activity_id=f'ACT-{device.device_ref}' if device is not None else None,
+        login_id=customer.customer_ref if customer is not None else None,
+        ticket_category=event.event_type,
+        ticket_created_at=created_at,
+        staff_code=technician.staff_code,
     )
 
     try:
         tickets_repo.add(session, ticket)
         session.flush()
+        sync_ticket_facts(session, ticket)
         event.processed_at = datetime.now(UTC)
         events_repo.record_audit_event(
             session,

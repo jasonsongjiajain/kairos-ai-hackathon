@@ -104,7 +104,7 @@ describe('EventIntakeQueue', () => {
       resolveFetch(jsonResponse(PENDING_EVENTS))
     })
     expect(await screen.findByRole('button', { name: /ONU OFFLINE/ })).toBeInTheDocument()
-    expect(screen.getByText('Seeded demo event')).toBeInTheDocument()
+    expect(screen.getByText('Ingested network event')).toBeInTheDocument()
     expect(screen.getAllByText('EVT-1').length).toBeGreaterThan(0)
   })
 

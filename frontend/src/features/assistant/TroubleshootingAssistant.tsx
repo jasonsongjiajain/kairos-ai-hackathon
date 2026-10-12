@@ -2,60 +2,124 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { reveal } from '../../lib/motion'
 import { Button } from '../../components/ui/button'
-import { TicketsApiError } from '../../lib/api/tickets'
-import type { Device } from '../../lib/api/tickets'
+import { TicketsApiError, revealServiceCredential } from '../../lib/api/tickets'
+import type { Device, ServiceDetail } from '../../lib/api/tickets'
 import { askAssistantWithStream, type AssistantAnswer } from '../../lib/api/assistant'
-import { AgentSuggestedAction } from './AgentSuggestedAction'
+import { AgentActionPlan } from './AgentActionPlan'
 import { NextBestActionPanel } from '../work/NextBestActionPanel'
-import { AssistantComposer } from './AssistantComposer'
-import { ChatMessage } from './ChatMessage'
+import { OperationStatusLabel } from '../../components/ai/status'
+import {
+  Chatbot,
+  ChatbotHeader,
+  ChatbotMessage,
+  ChatbotPromptInput,
+  ChatbotSuggestions,
+} from '@/components/ai/chatbot'
 import { EvidenceCitation } from './EvidenceCitation'
-import { ToolActivity, type ToolActivityState } from './ToolActivity'
+import { Streamdown } from 'streamdown'
 import type { IncidentStage } from '../work/IncidentTrace'
 import type { ToolExecution } from '../../lib/api/tools'
+import { readConversation, writeConversation, type StoredConversationTurn } from '../../lib/assistant/conversation-storage'
+import { Reasoning } from '@/components/ai/reasoning'
+import { Sources } from '@/components/ai/sources'
+import { ChatsCircle } from '@phosphor-icons/react'
+import { MagnifyingGlass, ShieldCheck, Wrench } from '@phosphor-icons/react'
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from '@/components/ai/conversation'
+import {
+  ChainOfThoughtSearchResults,
+  ChainOfThoughtSearchResult,
+  ChainOfThoughtStep,
+} from '@/components/ai/chain-of-thought'
 
-type TurnState = 'pending' | 'answered' | 'error'
-
-type Turn = {
-  id: number
-  question: string
-  state: TurnState
-  answer?: AssistantAnswer
-  message?: string
-  activity: ToolActivityState
+type Turn = StoredConversationTurn
+function hasUnconfirmedOutcome(turn: Turn) {
+  return turn.state === 'error' && /stream closed before|reply did not finish/i.test(turn.message ?? '')
 }
 
 type TroubleshootingAssistantProps = {
   ticketId: string
   token: string
+  userId?: string
   devices: Device[]
+  services?: ServiceDetail[]
+  onAnswer?: (answer: AssistantAnswer) => void
   onSelectDevice?: (deviceId: string) => void
   onEvidenceProgress?: (stage: IncidentStage) => void
   onEvidenceStart?: () => NonNullable<TroubleshootingAssistantProps['onEvidenceProgress']>
   onActionProgress?: (stage: IncidentStage, outcome?: ToolExecution) => void
-  onActionStart?: () => NonNullable<TroubleshootingAssistantProps['onActionProgress']>
+  onActionStart?: (deviceId?: string) => NonNullable<TroubleshootingAssistantProps['onActionProgress']>
+}
+
+function EvidenceChain({ turn }: { turn: Turn }) {
+  const pending = turn.state === 'pending'
+  const answered = turn.state === 'answered'
+  const citations = turn.answer?.citations ?? []
+  const hasEvidence = Boolean(turn.answer?.has_evidence)
+  const failed = turn.state === 'error'
+
+  return (
+    <Reasoning key={pending ? 'pending' : 'settled'} defaultOpen={pending} active={pending} title={pending ? 'Checking ticket evidence and guidance' : 'Evidence checks'} className="assistant-chain">
+        <ChainOfThoughtStep
+          icon={MagnifyingGlass}
+          label={pending ? 'Searching the ticket and knowledge base' : failed ? 'Search did not complete' : 'Searched the ticket and knowledge base'}
+          description={
+            pending
+              ? turn.message ?? 'Connecting to the ticket assistant…'
+              : failed
+                ? 'Retrieval did not complete for this question.'
+                : 'Matched the ticket context against indexed field procedures.'
+          }
+          status={pending ? 'active' : failed ? 'pending' : 'complete'}
+        >
+          {citations.length > 0 && (
+            <ChainOfThoughtSearchResults>
+              {citations.map((citation) => (
+                <ChainOfThoughtSearchResult key={citation.chunk_id}>
+                  {citation.section}
+                </ChainOfThoughtSearchResult>
+              ))}
+            </ChainOfThoughtSearchResults>
+          )}
+        </ChainOfThoughtStep>
+        <ChainOfThoughtStep
+          icon={ShieldCheck}
+          label={
+            hasEvidence
+              ? `Grounded the answer in ${citations.length} source${citations.length === 1 ? '' : 's'}`
+              : pending ? 'Waiting for retrieved sources' : failed ? 'Evidence verification unavailable' : 'No matching source was found'
+          }
+          status={answered && hasEvidence ? 'complete' : 'pending'}
+        />
+        {turn.answer?.next_best_action && (
+          <ChainOfThoughtStep icon={Wrench} label="Prepared a next best action" status="complete" />
+        )}
+    </Reasoning>
+  )
 }
 
 function AssistantAnswerBody({ answer }: { answer: AssistantAnswer }) {
   const reducedMotion = Boolean(useReducedMotion())
   return (
     <motion.div className="assistant-answer" variants={reveal} initial="hidden" animate="visible" custom={reducedMotion}>
-      <p className="assistant-answer-text">{answer.answer}</p>
+      <div className="assistant-answer-text"><Streamdown mode="static">{answer.answer}</Streamdown></div>
       {answer.uncertainty && <p className="assistant-uncertainty">{answer.uncertainty}</p>}
-      {!answer.has_evidence && (
+      {!answer.has_evidence && !isCredentialQuestion(answer.answer) && (
         <p className="no-evidence-note">
           No knowledge document matched this question, so this answer has no cited source.
         </p>
       )}
       {answer.citations.length > 0 && (
-        <div className="citation-block">
-          <h4>Retrieved evidence</h4>
+        <Sources count={answer.citations.length} label="Retrieved evidence" className="citation-block">
           <ul className="citation-list">
             {answer.citations.map((citation, index) => (
               <EvidenceCitation key={citation.chunk_id} citation={citation} index={index} />
             ))}
           </ul>
-        </div>
+        </Sources>
       )}
       {answer.next_best_action && (
         <NextBestActionPanel action={answer.next_best_action} citations={answer.citations} />
@@ -64,16 +128,52 @@ function AssistantAnswerBody({ answer }: { answer: AssistantAnswer }) {
   )
 }
 
-export function TroubleshootingAssistant(props: TroubleshootingAssistantProps) {
-  return <AssistantSession key={`${props.ticketId}:${props.token}`} {...props} />
+function CredentialRequest({ ticketId, token, question, services = [] }: { ticketId: string; token: string; question: string; services?: ServiceDetail[] }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'revealed' | 'error'>('idle')
+  const [value, setValue] = useState('')
+  const loweredQuestion = question.toLowerCase()
+  const service = services.find((item) => {
+    const serviceType = item.service_type.toLowerCase()
+    return ['iptv', 'vobb', 'hsi', 'internet'].some((type) => loweredQuestion.includes(type) && serviceType.includes(type))
+  }) ?? services.find((item) => item.credential_available && item.service_type.toLowerCase() === 'vobb')
+    ?? services.find((item) => item.credential_available)
+  if (!service) return null
+  const reveal = async () => {
+    setState('loading')
+    try {
+      const result = await revealServiceCredential(ticketId, service.id, token)
+      setValue(`${result.credential_type.replace(/_/g, ' ')}: ${result.credential}`)
+      setState('revealed')
+    } catch {
+      setState('error')
+    }
+  }
+  return <div className="credential-request" aria-live="polite">
+    <p><strong>{service.service_type} credential available</strong> · {service.service_ref}</p>
+    {state === 'revealed' ? <code>{value}</code> : <Button type="button" className="process-button" onClick={() => void reveal()} disabled={state === 'loading'}>{state === 'loading' ? 'Revealing credential…' : 'Reveal credential'}</Button>}
+    {state === 'error' && <p className="form-error" role="alert">The credential could not be revealed. Retry.</p>}
+  </div>
 }
 
-function AssistantSession({ ticketId, token, devices, onSelectDevice, onEvidenceProgress, onEvidenceStart, onActionProgress, onActionStart }: TroubleshootingAssistantProps) {
-  const [turns, setTurns] = useState<Turn[]>([])
-  const [nextId, setNextId] = useState(1)
+function isCredentialQuestion(question: string) {
+  return /\b(credential|password|passcode|login|secret)\b/i.test(question)
+}
+
+export function TroubleshootingAssistant(props: TroubleshootingAssistantProps) {
+  return <AssistantSession key={`${props.ticketId}:${props.userId ?? 'anonymous'}:${props.token}`} {...props} />
+}
+
+function AssistantSession({ ticketId, token, userId, devices, services, onAnswer, onSelectDevice, onEvidenceProgress, onEvidenceStart, onActionProgress, onActionStart }: TroubleshootingAssistantProps) {
+  const [turns, setTurns] = useState<Turn[]>(() => userId ? readConversation(userId, ticketId) : [])
+  const nextId = useRef(turns.reduce((largest, turn) => Math.max(largest, turn.id), 0) + 1)
   const active = useRef(true)
   const latestRequest = useRef(0)
   useEffect(() => { active.current = true; return () => { active.current = false } }, [])
+  useEffect(() => { if (userId) writeConversation(userId, ticketId, turns) }, [ticketId, turns, userId])
+  useEffect(() => {
+    const latest = [...turns].reverse().find((turn) => turn.state === 'answered' && turn.answer && !isCredentialQuestion(turn.question))
+    if (latest?.answer) onAnswer?.(latest.answer)
+  }, [turns, onAnswer])
 
   const run = useCallback(
     async (id: number, question: string) => {
@@ -90,12 +190,12 @@ function AssistantSession({ ticketId, token, devices, onSelectDevice, onEvidence
         })
         if (!active.current) return
         setTurns((current) =>
-          current.map((turn) => (turn.id === id ? { ...turn, state: 'answered', activity: answer.has_evidence ? 'completed' : 'no-evidence', answer } : turn)),
+          current.map((turn) => (turn.id === id ? { ...turn, state: 'answered', message: undefined, activity: answer.has_evidence ? 'completed' : 'no-evidence', answer } : turn)),
         )
         if (request === latestRequest.current || onEvidenceStart) reportEvidence?.({ id: 'evidence', label: 'Evidence', state: answer.has_evidence ? 'complete' : 'blocked', detail: answer.has_evidence ? 'Evidence returned' : 'No matching evidence returned' })
       } catch (error) {
         if (!active.current) return
-        if (request === latestRequest.current || onEvidenceStart) reportEvidence?.({ id: 'evidence', label: 'Evidence', state: 'blocked', detail: 'Assistant request failed' })
+        if (request === latestRequest.current || onEvidenceStart) reportEvidence?.({ id: 'evidence', label: 'Evidence', state: 'blocked', detail: error instanceof Error && /stream closed before/i.test(error.message) ? 'Outcome not confirmed' : 'Assistant request failed' })
         setTurns((current) =>
           current.map((turn) =>
             turn.id === id
@@ -113,12 +213,11 @@ function AssistantSession({ ticketId, token, devices, onSelectDevice, onEvidence
         )
       }
     },
-    [ticketId, token, onEvidenceProgress],
+    [ticketId, token, onEvidenceProgress, onEvidenceStart],
   )
 
   const ask = (question: string) => {
-    const id = nextId
-    setNextId(id + 1)
+    const id = nextId.current++
     setTurns((current) => [...current, { id, question, state: 'pending', activity: 'pending' }])
     void run(id, question)
   }
@@ -126,76 +225,85 @@ function AssistantSession({ ticketId, token, devices, onSelectDevice, onEvidence
   const isSearching = turns.some((turn) => turn.state === 'pending')
 
   return (
-    <section className="panel assistant-panel" aria-labelledby="assistant-heading">
-      <header className="assistant-heading">
-        <div>
-          <p className="section-label">Troubleshooting assistant</p>
-          <h3 id="assistant-heading">A clearer path to resolution.</h3>
-        </div>
-        <span className="assistant-context-label">Ticket context included</span>
-      </header>
+    <Chatbot className="panel assistant-panel" aria-labelledby="assistant-heading">
+      <ChatbotHeader
+        label="Troubleshooting assistant"
+        title="Investigate this incident"
+        titleId="assistant-heading"
+        context={<span className="assistant-context-label"><ChatsCircle size={16} aria-hidden="true" /> Ticket context included</span>}
+      />
 
       {turns.length === 0 ? (
         <div className="assistant-empty">
-          <p className="assistant-empty-title">Investigate the service<br /><em>one question at a time.</em></p>
-          <p className="muted-note">Ask about the ticket, network path, or next checks. Answers can include ticket evidence and inspectable sources.</p>
-          <div className="assistant-starters" aria-label="Suggested questions">
-            {['What should I check first?', 'Why is the service down?', 'Summarize this ticket'].map((question) => (
-              <Button key={question} variant="secondary" type="button" onClick={() => ask(question)}>{question}</Button>
-            ))}
-          </div>
+          <div className="assistant-empty-symbol" aria-hidden="true"><MagnifyingGlass size={32} /></div>
+          <p className="assistant-empty-title">Find the fault.<br /><span>Follow the evidence.</span></p>
+          <p className="muted-note">Ask a question about this incident. The assistant checks ticket details and service guidance, then shows the sources behind its answer.</p>
+          <ChatbotSuggestions
+            items={['What should I check first?', 'Why is the service down?', 'Summarize this ticket']}
+            onSelect={ask}
+          />
         </div>
       ) : (
-        <ul className="chat-thread" tabIndex={0} aria-label="Ticket conversation" aria-live="polite" aria-relevant="additions text">
-          {turns.map((turn) => (
-            <Fragment key={turn.id}>
-              <ChatMessage role="user" label="You asked">
-                <p>{turn.question}</p>
-              </ChatMessage>
+        <Conversation className="assistant-conversation" aria-label="Ticket conversation">
+          <ConversationContent className="assistant-thread">
+            {turns.map((turn) => (
+              <Fragment key={turn.id}>
+                <ChatbotMessage from="user" roleLabel="You asked">
+                  <p>{turn.question}</p>
+                </ChatbotMessage>
 
-              <ChatMessage role="assistant" label="Assistant">
-                <ToolActivity state={turn.activity} label="Ticket evidence"
-                  description={turn.state === 'answered'
-                    ? turn.answer?.has_evidence ? 'Evidence returned with the answer.' : 'No matching evidence returned.'
-                    : turn.message ?? 'Waiting for the assistant response.'} />
-              {turn.state === 'error' && (
-                <>
-                  <p className="form-error" role="alert">
-                    {turn.message}
-                  </p>
-                  <Button
-                    className="process-button"
-                    type="button"
-                    onClick={() => void run(turn.id, turn.question)}
-                  >
-                    Retry this question
-                  </Button>
-                </>
-              )}
+                <ChatbotMessage from="assistant" roleLabel={turn.state === 'pending' ? 'Assistant · Investigating' : 'Assistant'}>
+                    <p className="sr-only" role="status" aria-live="polite">{turn.state === 'pending' ? 'Pending' : hasUnconfirmedOutcome(turn) ? 'Outcome not confirmed' : turn.state === 'error' ? 'Failed' : turn.answer?.has_evidence ? 'Completed' : 'No evidence'}. {turn.message}</p>
+                    <EvidenceChain turn={turn} />
+                    {turn.state === 'pending' && (
+                      <div className="response-generation" aria-label="Generating assistant response"><OperationStatusLabel status="searching" /><span>Checking ticket evidence</span></div>
+                    )}
+                    {turn.state === 'error' && (
+                      <>
+                        <OperationStatusLabel status={hasUnconfirmedOutcome(turn) ? 'unknown' : 'failed'} />
+                        <p className="form-error" role="alert">
+                          {turn.message}
+                        </p>
+                        <Button
+                          className="process-button"
+                          type="button"
+                          onClick={() => void run(turn.id, turn.question)}
+                        >
+                          Retry this question
+                        </Button>
+                      </>
+                    )}
 
-              {turn.state === 'answered' && turn.answer && (
-                <>
-                  <AssistantAnswerBody answer={turn.answer} />
-                  {turn.answer.has_evidence && (
-                    <AgentSuggestedAction
-                      ticketId={ticketId}
-                      token={token}
-                      question={turn.question}
-                      devices={devices}
-                      onSelectDevice={onSelectDevice}
-                      onActionProgress={onActionProgress}
-                      onActionStart={onActionStart}
-                    />
-                  )}
-                </>
-              )}
-              </ChatMessage>
-            </Fragment>
-          ))}
-        </ul>
+                    {turn.state === 'answered' && turn.answer && (
+                      <>
+                        {turn.message && <p role="status" className="assistant-uncertainty">{turn.message}</p>}
+                        <AssistantAnswerBody answer={turn.answer} />
+                        {isCredentialQuestion(turn.question) && <CredentialRequest ticketId={ticketId} token={token} question={turn.question} services={services} />}
+                        {!isCredentialQuestion(turn.question) && turn.answer.has_evidence && turn.answer.citations.length > 0 && (
+                          <AgentActionPlan
+                            ticketId={ticketId}
+                            token={token}
+                            question={turn.question}
+                            devices={devices}
+                            onSelectDevice={onSelectDevice}
+                              onActionProgress={onActionProgress}
+                              onActionStart={onActionStart}
+                              initialState={turn.action}
+                              onStateChange={(action) => setTurns((current) => current.map((item) => item.id === turn.id ? { ...item, action } : item))}
+                              onUnconfirmed={(message) => setTurns((current) => current.map((item) => item.id === turn.id ? { ...item, message } : item))}
+                            />
+                        )}
+                      </>
+                    )}
+                </ChatbotMessage>
+              </Fragment>
+            ))}
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
       )}
 
-      <AssistantComposer onSubmit={ask} disabled={false} isSearching={isSearching} />
-    </section>
+      <ChatbotPromptInput onSubmit={ask} disabled={false} isSearching={isSearching} />
+    </Chatbot>
   )
 }

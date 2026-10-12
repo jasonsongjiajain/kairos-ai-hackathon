@@ -19,7 +19,7 @@ const nextBestActionSchema = z.object({
   suggestion_evidence: z.array(z.string()),
 })
 
-const assistantAnswerSchema = z.object({
+export const assistantAnswerSchema = z.object({
   session_id: z.string().min(1),
   answer: z.string(),
   uncertainty: z.string(),

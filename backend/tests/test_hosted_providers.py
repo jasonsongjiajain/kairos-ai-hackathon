@@ -31,8 +31,8 @@ def test_chat_and_reasoning_builders_select_distinct_gigx_models():
 
     assert isinstance(chat, HostedChatCompletionProvider)
     assert isinstance(reasoning, HostedChatCompletionProvider)
-    assert chat.model == "gigx/gemma-4-e2b-it"
-    assert reasoning.model == "gigx/qwen3-vl-4b-instruct"
+    assert chat.model == "gemma-4-e2b-it"
+    assert reasoning.model == "qwen3-vl-4b-instruct"
     assert chat.base_url == "https://gigx.nexa-dev.tm.com.my/llm/v1"
 
 
@@ -52,7 +52,7 @@ def test_chat_completion_sends_openai_compatible_request():
     provider = HostedChatCompletionProvider(
         base_url="https://gigx.nexa-dev.tm.com.my/llm/v1",
         api_key="test-api-key",
-        model="gigx/gemma-4-e2b-it",
+        model="gemma-4-e2b-it",
         client=client,
     )
 
@@ -61,7 +61,7 @@ def test_chat_completion_sends_openai_compatible_request():
     assert response == '{"answer":"grounded"}'
     assert request_metadata[0] == ("/llm/v1/chat/completions", "Bearer test-api-key")
     assert request_bodies[0].startswith("{")
-    assert '"model":"gigx/gemma-4-e2b-it"' in request_bodies[0]
+    assert '"model":"gemma-4-e2b-it"' in request_bodies[0]
     client.close()
 
 
@@ -73,12 +73,12 @@ def test_hosted_embedding_validates_vector_dimension():
     provider = HostedEmbeddingProvider(
         base_url="https://gigx.nexa-dev.tm.com.my/llm/v1",
         api_key="test-api-key",
-        model="gigx/qwen3-embedding-0.6b",
-        dimension=1536,
+        model="qwen3-embedding-0.6b",
+        dimension=1024,
         client=client,
     )
 
-    with pytest.raises(RuntimeError, match="database schema requires 1536"):
+    with pytest.raises(RuntimeError, match="EMBEDDING_DIMENSIONS=1024"):
         provider.embed_query("optical signal")
     client.close()
 
@@ -87,5 +87,5 @@ def test_hosted_embedding_builder_uses_configured_model():
     provider = build_embedding_provider(settings())
 
     assert isinstance(provider, HostedEmbeddingProvider)
-    assert provider.model == "gigx/qwen3-embedding-0.6b"
-    assert provider.dimension == 1536
+    assert provider.model == "qwen3-embedding-0.6b"
+    assert provider.dimension == 1024

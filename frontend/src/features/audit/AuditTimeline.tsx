@@ -1,6 +1,7 @@
 import type { AuditEvent } from '../../lib/api/audit'
 import { motion, useReducedMotion } from 'framer-motion'
 import { prefersReducedMotion, reveal } from '../../lib/motion'
+import { AuditEventStatus } from './AuditEventRow'
 
 const EVENT_LABELS: Record<string, string> = {
   event_processed: 'Event processed into a ticket',
@@ -43,6 +44,7 @@ export function AuditTimeline({ events }: { events: AuditEvent[] }) {
         <motion.li key={event.id} className="audit-entry" initial="hidden" animate="visible"
           variants={reveal} custom={reducedMotion}>
           <p className="audit-type">{EVENT_LABELS[event.event_type] ?? event.event_type}</p>
+          <AuditEventStatus event={event} />
           <p className="audit-meta">
             {event.actor_name ?? 'System'} · <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
           </p>

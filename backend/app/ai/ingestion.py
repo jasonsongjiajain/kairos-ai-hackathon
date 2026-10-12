@@ -16,6 +16,7 @@ from app.ai.ports import EmbeddingProvider
 from app.config import get_settings
 from app.domain.models import KnowledgeChunk, KnowledgeDocument
 from app.integrations.embeddings import build_embedding_provider
+from app.services.entity_facts import embed_missing_entity_facts
 
 DEFAULT_KNOWLEDGE_DIR = Path(__file__).resolve().parents[2] / "seed" / "knowledge"
 
@@ -34,6 +35,7 @@ def index_knowledge(
     *,
     directory: Path | str = DEFAULT_KNOWLEDGE_DIR,
     source_type: str = "curated_procedure",
+    reembed: bool = False,
 ) -> IngestionReport:
     parsed = _parse_directory(directory, source_type)
     for document_spec in parsed:
@@ -42,7 +44,8 @@ def index_knowledge(
             _upsert_chunk(session, document, chunk_spec)
     session.flush()
 
-    generated, reused = embed_missing_chunks(session, embedder)
+    generated, reused = embed_missing_chunks(session, embedder, reembed=reembed)
+    embed_missing_entity_facts(session, embedder, reembed=reembed)
     session.flush()
     return IngestionReport(
         documents=len(parsed),
@@ -52,7 +55,9 @@ def index_knowledge(
     )
 
 
-def embed_missing_chunks(session: Session, embedder: EmbeddingProvider) -> tuple[int, int]:
+def embed_missing_chunks(
+    session: Session, embedder: EmbeddingProvider, *, reembed: bool = False
+) -> tuple[int, int]:
     """Fill embeddings on any persisted chunk that lacks one; reuse existing ones."""
     titles = {
         document.id: document.title
@@ -61,7 +66,7 @@ def embed_missing_chunks(session: Session, embedder: EmbeddingProvider) -> tuple
     generated = 0
     reused = 0
     for chunk in session.scalars(select(KnowledgeChunk).order_by(KnowledgeChunk.id)).all():
-        if chunk.embedding is not None:
+        if chunk.embedding is not None and not reembed:
             reused += 1
             continue
         text = _embedding_text(titles.get(chunk.document_id, ""), chunk.section, chunk.content)
@@ -135,11 +140,14 @@ def _require_canonical(row: object, **expected_fields: str) -> None:
 
 
 def main() -> None:
+    import sys
+
     from app.db.session import SessionLocal
 
+    reembed = '--reembed' in sys.argv[1:]
     embedder = build_embedding_provider(get_settings())
     with SessionLocal() as session:
-        report = index_knowledge(session, embedder)
+        report = index_knowledge(session, embedder, reembed=reembed)
         session.commit()
     print(
         f"Indexed {report.documents} documents, {report.chunks} chunks; "

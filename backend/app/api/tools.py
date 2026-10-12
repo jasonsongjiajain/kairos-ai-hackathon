@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -6,9 +7,11 @@ from app.ai.ports import ChatCompletionProvider, EmbeddingProvider
 from app.api.assistant import get_embedding_provider
 from app.config import get_settings
 from app.integrations.model_provider import build_chat_provider
-from app.services.agent_tools import AgentToolProposalError, propose_agent_tool
+from app.services.agent_tools import AgentToolProposalError, plan_agent_tools, propose_agent_tool
 from app.db.session import get_session
 from app.domain.tool_schemas import (
+    AgentPlanRead,
+    AgentPlanSuggestionRead,
     AgentToolProposeRequest,
     ToolCatalogItemRead,
     ToolConfirmRequest,
@@ -17,6 +20,7 @@ from app.domain.tool_schemas import (
     ToolProposeRequest,
 )
 from app.services import tool_execution
+from app.services.ticket_queries import TicketNotFoundError
 from app.services.tool_execution import (
     ToolForbiddenError,
     ToolNotFoundError,
@@ -48,16 +52,81 @@ def agent_propose_tool(
             payload.device_id,
             embedder=embedder,
             provider=provider,
+            tool_name=payload.tool_name,
+            parameters=payload.parameters,
         )
     except AgentToolProposalError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
-    except ToolNotFoundError as error:
+    except (ToolNotFoundError, TicketNotFoundError) as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket or tool not found") from error
+    except (RuntimeError, httpx.HTTPError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The model service is unavailable. Check provider settings and connectivity.",
+        ) from error
     except ToolForbiddenError as error:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This action is not permitted here") from error
     except ToolValidationError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     return _proposal_read(record)
+
+
+@router.post("/{ticket_id}/tools/agent-plan", response_model=AgentPlanRead)
+def agent_plan_tools(
+    ticket_id: str,
+    payload: AgentToolProposeRequest,
+    session: Session = Depends(get_session),
+    user: AuthenticatedUser = Depends(get_current_user),
+    embedder: EmbeddingProvider = Depends(get_embedding_provider),
+    provider: ChatCompletionProvider = Depends(get_reasoning_provider),
+) -> AgentPlanRead:
+    try:
+        plan = plan_agent_tools(
+            session,
+            ticket_id,
+            user,
+            payload.question,
+            payload.device_id,
+            embedder=embedder,
+            provider=provider,
+        )
+    except ToolNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found") from error
+    except TicketNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found") from error
+    except (RuntimeError, httpx.HTTPError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The model service is unavailable. Check provider settings and connectivity.",
+        ) from error
+    except AgentToolProposalError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    return AgentPlanRead(
+        ticket_id=plan.ticket_id,
+        question=plan.question,
+        device_id=plan.device_id,
+        summary=plan.summary,
+        suggestions=[
+            AgentPlanSuggestionRead(
+                tool_name=item.tool_name,
+                title=item.title,
+                description=item.description,
+                kind=item.kind,
+                category=item.category,
+                risk=item.risk,
+                requires_confirmation=item.requires_confirmation,
+                device_id=item.device_id,
+                device_ref=item.device_ref,
+                device_type=item.device_type,
+                parameters=item.parameters,
+                rationale=item.rationale,
+                steps=item.steps,
+                evidence=item.evidence,
+                confidence=item.confidence,
+            )
+            for item in plan.suggestions
+        ],
+    )
 
 
 @router.get("/{ticket_id}/tools/catalog", response_model=list[ToolCatalogItemRead])
@@ -68,9 +137,13 @@ def get_tool_catalog(
     return [
         ToolCatalogItemRead(
             name=item.name,
+            title=item.title,
             description=item.description,
             kind=item.kind,
+            category=item.category,
+            risk=item.risk,
             requires_confirmation=item.requires_confirmation,
+            target_device_types=list(item.target_device_types) if item.target_device_types else None,
         )
         for item in tool_execution.catalog(user)
     ]
