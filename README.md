@@ -1,7 +1,7 @@
-# Field Force Incident Assistant
+# Customer Incident Assistant
 
-An authenticated field-operations app that turns one processed network event into an assigned
-ticket, then helps the assigned technician diagnose it with retrieval-grounded answers and
+An authenticated customer-operations app that turns one processed network event into an assigned
+ticket, then helps the customer diagnose it with retrieval-grounded answers and
 permission-checked device actions.
 
 **Status:** 24-hour hackathon MVP. All customer, device, and credential data is synthetic demo data.
